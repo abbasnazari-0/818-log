@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import url('https://cdn.font.ir/css?family=Vazirmatn');
+
+@layer base {
+    body {
+        @apply bg-slate-50 text-slate-900 antialiased;
+        font-family: 'Vazirmatn', sans-serif;
+    }
+}
+
+/* Custom scrollbar for better look */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    @apply bg-slate-100;
+}
+
+::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded hover:bg-slate-400;
+}

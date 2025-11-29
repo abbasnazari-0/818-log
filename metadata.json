@@ -1,0 +1,7 @@
+{
+  "name": "GlobalLink Logistics",
+  "description": "Multi-agent logistics management system for China-UAE-Iran shipping routes with role-based dashboards, QR tracking, and full lifecycle management.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

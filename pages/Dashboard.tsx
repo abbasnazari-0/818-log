@@ -24,7 +24,7 @@ interface CustomerSummary {
   customerId: string;
   customerName: string;
   customerPhone?: string;
-  shippingAddress?: string;
+  address?: string;
   totalOrders: number;
   lastOrderDate: number;
   lastOrderId: string;
@@ -39,6 +39,9 @@ export const Dashboard: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [displayedCustomers, setDisplayedCustomers] = useState<CustomerSummary[]>([]);
+  const [customersLimit, setCustomersLimit] = useState(20);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const fetchData = async () => {
     if (user) {
@@ -80,6 +83,18 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [user]);
+
+  useEffect(() => {
+    setDisplayedCustomers(customers.slice(0, customersLimit));
+  }, [customers, customersLimit]);
+
+  const handleLoadMoreCustomers = () => {
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setCustomersLimit((prev) => prev + 20);
+      setIsLoadingMore(false);
+    }, 300);
+  };
 
   if (loading) return <div className="flex justify-center p-12 text-slate-400">Loading dashboard...</div>;
 
@@ -254,11 +269,11 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {customers.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {customers.map(customer => {
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {displayedCustomers.map(customer => {
               const totalValue = customer.orders.reduce((sum, order) => sum + (order.totalPrice || 0), 0);
-              const deliveredPercentage = customer.totalOrders > 0 
-                ? Math.round((customer.deliveredOrders / customer.totalOrders) * 100) 
+              const deliveredPercentage = customer.orders.length > 0 
+                ? Math.round((customer.deliveredOrders / customer.orders.length) * 100) 
                 : 0;
 
               return (
@@ -277,10 +292,10 @@ export const Dashboard: React.FC = () => {
                             <span>{customer.customerPhone}</span>
                           </div>
                         )}
-                        {customer.shippingAddress && (
+                        {customer.address && (
                           <div className="flex items-start gap-2 text-xs text-slate-500 mt-2">
                             <MapPin size={14} className="mt-0.5 shrink-0" />
-                            <span className="line-clamp-2">{customer.shippingAddress}</span>
+                            <span className="line-clamp-2">{customer.address}</span>
                           </div>
                         )}
                       </div>
@@ -404,7 +419,35 @@ export const Dashboard: React.FC = () => {
               );
             })}
           </div>
-        ) : (
+        ) : null}
+        
+        {/* Load More Button */}
+        {customers.length > displayedCustomers.length && (
+          <div className="flex justify-center py-6">
+            <button
+              onClick={handleLoadMoreCustomers}
+              disabled={isLoadingMore}
+              className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isLoadingMore ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  در حال بارگذاری...
+                </>
+              ) : (
+                <>
+                  بارگذاری بیشتر ({customers.length - displayedCustomers.length} مشتری دیگر)
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+        
+        {customers.length === 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
             <Users size={48} className="mx-auto text-slate-300 mb-4" />
             <p className="text-slate-500 font-medium mb-1">No customers found</p>

@@ -22,9 +22,14 @@ export const OrderList: React.FC = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
+  const [displayedOrders, setDisplayedOrders] = useState<Order[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [ordersLimit, setOrdersLimit] = useState(20);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [sortBy, setSortBy] = useState<'date' | 'customer' | 'price' | 'status'>('date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Customer Management
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -37,6 +42,8 @@ export const OrderList: React.FC = () => {
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const [newCustomerAddress, setNewCustomerAddress] = useState('');
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
+  const [newInstagramId, setNewInstagramId] = useState('');
+  const [newTelPost, setNewTelPost] = useState('');
 
   const [newOrderSource, setNewOrderSource] = useState('1688');
   const [orderItems, setOrderItems] = useState<{ link: string; description: string; price: string; currency: string; qty: number }[]>([
@@ -55,6 +62,19 @@ export const OrderList: React.FC = () => {
   const [paymentOrderId, setPaymentOrderId] = useState<string>('');
   const [newPaymentAmount, setNewPaymentAmount] = useState('');
   const [newPaymentCurrency, setNewPaymentCurrency] = useState('AED');
+
+  // Edit Order Management
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editCustomerPhone, setEditCustomerPhone] = useState('');
+  const [editCustomerAddress, setEditCustomerAddress] = useState('');
+  const [editInstagramId, setEditInstagramId] = useState('');
+  const [editTelPost, setEditTelPost] = useState('');
+  const [editOrderItems, setEditOrderItems] = useState<{ link: string; description: string; price: string; currency: string; qty: number }[]>([]);
+  const [editAmountPaid, setEditAmountPaid] = useState('');
+  const [editPaymentCurrency, setEditPaymentCurrency] = useState('AED');
+  const [editOrderSource, setEditOrderSource] = useState('1688');
 
   useEffect(() => {
     fetchOrders();
@@ -134,14 +154,50 @@ export const OrderList: React.FC = () => {
     if (searchTerm) {
       const lowerTerm = searchTerm.toLowerCase();
       result = result.filter(o =>
-        o.id.toLowerCase().includes(lowerTerm) ||
-        o.customerName.toLowerCase().includes(lowerTerm) ||
-        o.source.toLowerCase().includes(lowerTerm)
+        o.id?.toLowerCase().includes(lowerTerm) ||
+        o.customerName?.toLowerCase().includes(lowerTerm) ||
+        o.customerPhone?.includes(lowerTerm) ||
+        o.source?.toLowerCase().includes(lowerTerm)
       );
     }
 
+    // 3. Sort
+    result.sort((a, b) => {
+      let comparison = 0;
+      
+      if (sortBy === 'date') {
+        comparison = a.createdAt - b.createdAt;
+      } else if (sortBy === 'customer') {
+        comparison = (a.customerName || '').localeCompare(b.customerName || '');
+      } else if (sortBy === 'price') {
+        comparison = (a.totalPrice || 0) - (b.totalPrice || 0);
+      } else if (sortBy === 'status') {
+        comparison = a.status.localeCompare(b.status);
+      }
+      
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
     setFilteredOrders(result);
-  }, [searchTerm, orders, activeFilter]);
+    setDisplayedOrders(result.slice(0, ordersLimit));
+  }, [searchTerm, orders, activeFilter, ordersLimit, sortBy, sortOrder]);
+
+  const handleLoadMore = () => {
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setOrdersLimit(prev => prev + 20);
+      setIsLoadingMore(false);
+    }, 300);
+  };
+
+  const handleSort = (column: 'date' | 'customer' | 'price' | 'status') => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortOrder('desc');
+    }
+  };
 
   // --- Create Order Logic ---
 
@@ -190,7 +246,7 @@ export const OrderList: React.FC = () => {
     let customerId = selectedCustomerId;
     let customerName = '';
     let customerPhone = '';
-    let shippingAddress = '';
+    let address = '';
 
     if (isNewCustomer) {
       // Create new customer
@@ -207,7 +263,7 @@ export const OrderList: React.FC = () => {
       await dataService.createCustomer(newCustomer);
       customerName = newCustomerName;
       customerPhone = newCustomerPhone;
-      shippingAddress = newCustomerAddress;
+      address = newCustomerAddress;
       
       // Refresh customer list
       await fetchCustomers();
@@ -217,7 +273,7 @@ export const OrderList: React.FC = () => {
       if (customer) {
         customerName = customer.name;
         customerPhone = customer.phone;
-        shippingAddress = customer.address;
+        address = customer.address;
       }
     }
 
@@ -250,7 +306,9 @@ export const OrderList: React.FC = () => {
       customerId: customerId,
       customerName: customerName,
       customerPhone: customerPhone,
-      shippingAddress: shippingAddress,
+      instagramId: newInstagramId,
+      tel_post: newTelPost,
+      address: address,
       source: newOrderSource as any,
       createdAt: Date.now(),
       totalItems: packages.length,
@@ -272,6 +330,8 @@ export const OrderList: React.FC = () => {
       setNewCustomerPhone('');
       setNewCustomerAddress('');
       setNewCustomerEmail('');
+      setNewInstagramId('');
+      setNewTelPost('');
       setOrderItems([{ link: '', description: '', price: '', currency: 'AED', qty: 1 }]);
       setAmountPaid('');
       fetchOrders(); // Refresh list
@@ -312,6 +372,124 @@ export const OrderList: React.FC = () => {
     } catch (error) {
       console.error('Error updating internal tracking code:', error);
       alert('خطا در ثبت کد رهگیری. لطفاً دوباره تلاش کنید.');
+    }
+  };
+
+  const handleOpenEditModal = (order: Order) => {
+    setEditingOrder(order);
+    setEditCustomerName(order.customerName);
+    setEditCustomerPhone(order.customerPhone || '');
+    setEditCustomerAddress(order.address || '');
+    setEditInstagramId(order.instagramId || '');
+    setEditTelPost(order.tel_post || '');
+    setEditOrderSource(order.source || '1688');
+    setEditAmountPaid((order.amountPaid || 0).toString());
+    setEditPaymentCurrency('AED');
+    
+    // Convert packages back to editable format
+    const items = order.packages.map(pkg => ({
+      link: pkg.productLink || '',
+      description: pkg.description,
+      price: (pkg.price || 0).toString(),
+      currency: 'AED',
+      qty: pkg.quantity || 1
+    }));
+    setEditOrderItems(items.length > 0 ? items : [{ link: '', description: '', price: '', currency: 'AED', qty: 1 }]);
+    
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditItemChange = (index: number, field: keyof typeof editOrderItems[0], value: any) => {
+    const newItems = [...editOrderItems];
+    newItems[index][field] = value;
+    setEditOrderItems(newItems);
+  };
+
+  const handleAddEditItem = () => {
+    setEditOrderItems([...editOrderItems, { link: '', description: '', price: '', currency: 'AED', qty: 1 }]);
+  };
+
+  const handleRemoveEditItem = (index: number) => {
+    if (editOrderItems.length <= 1) {
+      alert('حداقل باید یک آیتم باقی بماند');
+      return;
+    }
+    const newItems = [...editOrderItems];
+    newItems.splice(index, 1);
+    setEditOrderItems(newItems);
+  };
+
+  const calculateEditTotal = () => {
+    return editOrderItems.reduce((acc, item) => {
+      const price = parseFloat(item.price) || 0;
+      const qty = Number(item.qty) || 1;
+      const priceInAED = item.currency === 'IRR' ? price / exchangeRate : price;
+      return acc + priceInAED * qty;
+    }, 0);
+  };
+
+  const handleSaveEditedOrder = async () => {
+    if (!editingOrder || !editCustomerName) {
+      alert('لطفاً نام مشتری را وارد کنید');
+      return;
+    }
+
+    if (editOrderItems.length === 0 || !editOrderItems[0].description) {
+      alert('لطفاً حداقل یک محصول اضافه کنید');
+      return;
+    }
+
+    try {
+      const totalPrice = calculateEditTotal();
+      const paidAmount = parseFloat(editAmountPaid) || 0;
+      const paidInAED = editPaymentCurrency === 'IRR' ? paidAmount / exchangeRate : paidAmount;
+      const balanceDue = Math.max(0, totalPrice - paidInAED);
+
+      // Update packages
+      const updatedPackages: Package[] = editOrderItems.map((item, index) => {
+        const existingPkg = editingOrder.packages[index];
+        const priceInAED = item.currency === 'IRR' ? parseFloat(item.price) / exchangeRate : parseFloat(item.price);
+        
+        return {
+          id: existingPkg?.id || `PKG-${Date.now()}-${index}`,
+          orderId: editingOrder.id,
+          trackingNumber: existingPkg?.trackingNumber || '',
+          description: item.description,
+          weight: existingPkg?.weight || 0,
+          currentStatus: existingPkg?.currentStatus || PackageStatus.PURCHASED_FROM_SELLER,
+          productLink: item.link,
+          price: priceInAED,
+          quantity: item.qty,
+          qrCodeData: existingPkg?.qrCodeData || JSON.stringify({
+            packageId: existingPkg?.id || `PKG-${Date.now()}-${index}`,
+            orderId: editingOrder.id,
+          }),
+        };
+      });
+
+      const updatedOrder: Order = {
+        ...editingOrder,
+        customerName: editCustomerName,
+        customerPhone: editCustomerPhone,
+        instagramId: editInstagramId,
+        tel_post: editTelPost,
+        address: editCustomerAddress,
+        source: editOrderSource,
+        packages: updatedPackages,
+        totalPrice: totalPrice,
+        amountPaid: paidInAED,
+        balanceDue: balanceDue,
+      };
+
+      await dataService.updateOrder(updatedOrder);
+      
+      setIsEditModalOpen(false);
+      setEditingOrder(null);
+      fetchOrders();
+      alert('سفارش با موفقیت ویرایش شد!');
+    } catch (error) {
+      console.error('Error updating order:', error);
+      alert('خطا در ویرایش سفارش. لطفاً دوباره تلاش کنید.');
     }
   };
 
@@ -438,28 +616,79 @@ export const OrderList: React.FC = () => {
             <thead className="bg-slate-50 text-slate-500 font-medium">
               <tr>
                 <th className="px-6 py-4 text-right">عملیات</th>
-                <th className="px-6 py-4 text-right">وضعیت</th>
-                <th className="px-6 py-4 text-right">تاریخ</th>
-                {user?.role === UserRole.ADMIN && <th className="px-6 py-4 text-right">مالی</th>}
-                <th className="px-6 py-4 text-right">مشتری</th>
+                <th 
+                  className="px-6 py-4 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                  onClick={() => handleSort('status')}
+                >
+                  <div className="flex items-center justify-end gap-2">
+                    <span>وضعیت</span>
+                    {sortBy === 'status' && (
+                      <span className="text-blue-600">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </div>
+                </th>
+                <th 
+                  className="px-6 py-4 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                  onClick={() => handleSort('date')}
+                >
+                  <div className="flex items-center justify-end gap-2">
+                    <span>تاریخ</span>
+                    {sortBy === 'date' && (
+                      <span className="text-blue-600">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </div>
+                </th>
+                {user?.role === UserRole.ADMIN && (
+                  <th 
+                    className="px-6 py-4 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                    onClick={() => handleSort('price')}
+                  >
+                    <div className="flex items-center justify-end gap-2">
+                      <span>مالی</span>
+                      {sortBy === 'price' && (
+                        <span className="text-blue-600">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                      )}
+                    </div>
+                  </th>
+                )}
+                <th 
+                  className="px-6 py-4 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                  onClick={() => handleSort('customer')}
+                >
+                  <div className="flex items-center justify-end gap-2">
+                    <span>مشتری</span>
+                    {sortBy === 'customer' && (
+                      <span className="text-blue-600">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </div>
+                </th>
                 <th className="px-6 py-4 text-right">جزئیات سفارش</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredOrders.length > 0 ? (
-                filteredOrders.map(order => (
+              {displayedOrders.length > 0 ? (
+                displayedOrders.map(order => (
                   <React.Fragment key={order.id}>
                     <tr className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {(user?.role === 'ADMIN' || user?.role === 'CHINA_AGENT') && (
-                            <button
-                              onClick={() => handleDeleteOrder(order.id)}
-                              className="text-red-600 hover:text-red-800 p-2 hover:bg-red-50 rounded-lg transition-colors"
-                              title="حذف سفارش"
-                            >
-                              <Trash2 size={18} />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => handleDeleteOrder(order.id)}
+                                className="text-red-600 hover:text-red-800 p-2 hover:bg-red-50 rounded-lg transition-colors"
+                                title="حذف سفارش"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                              <button
+                                onClick={() => handleOpenEditModal(order)}
+                                className="text-orange-600 hover:text-orange-800 p-2 hover:bg-orange-50 rounded-lg transition-colors"
+                                title="ویرایش سفارش"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                              </button>
+                            </>
                           )}
                           <button
                             onClick={() => {
@@ -511,10 +740,51 @@ export const OrderList: React.FC = () => {
                       <td className="px-6 py-4 text-slate-600">
                         <div>{order.customerName}</div>
                         {order.customerPhone && <div className="text-xs text-slate-400 mt-0.5">{order.customerPhone}</div>}
+                        {order.instagramId && (
+                          <div className="text-xs mt-0.5 flex items-center gap-1">
+                            <a
+                              href={`https://instagram.com/${order.instagramId.replace('@', '')}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-purple-600 hover:underline flex items-center gap-1"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7.8 2h8.4C19.4 2 22 4.6 22 7.8v8.4a5.8 5.8 0 0 1-5.8 5.8H7.8C4.6 22 2 19.4 2 16.2V7.8A5.8 5.8 0 0 1 7.8 2m-.2 2A3.6 3.6 0 0 0 4 7.6v8.8C4 18.39 5.61 20 7.6 20h8.8a3.6 3.6 0 0 0 3.6-3.6V7.6C20 5.61 18.39 4 16.4 4H7.6m9.65 1.5a1.25 1.25 0 0 1 1.25 1.25A1.25 1.25 0 0 1 17.25 8 1.25 1.25 0 0 1 16 6.75a1.25 1.25 0 0 1 1.25-1.25M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/></svg>
+                              @{order.instagramId}
+                            </a>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(order.instagramId || '');
+                                alert('آیدی اینستاگرام کپی شد!');
+                              }}
+                              className="text-slate-400 hover:text-purple-600"
+                              title="کپی"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            </button>
+                          </div>
+                        )}
+                        {order.tel_post && (
+                          <div className="text-xs mt-0.5">
+                            <a 
+                              href={order.tel_post} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline flex items-center gap-1"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+                              پست تلگرام
+                            </a>
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="font-medium text-slate-900">{order.id}</div>
                         <div className="text-slate-500 text-xs mt-1">منبع: {order.source}</div>
+                        {(order as any).internalOrderId && (
+                          <div className="text-slate-400 text-[10px] mt-0.5 font-mono">
+                            سفارش داخلی: {(order as any).internalOrderId}
+                          </div>
+                        )}
                       </td>
                     </tr>
                     {/* Expanded Detail View */}
@@ -530,7 +800,7 @@ export const OrderList: React.FC = () => {
                                 <div className="grid grid-cols-2 gap-4">
                                   <div>
                                     <p className="text-xs text-slate-500">Address</p>
-                                    <p className="text-sm text-slate-700 font-medium">{order.shippingAddress || 'No address provided'}</p>
+                                    <p className="text-sm text-slate-700 font-medium">{order.address || 'No address provided'}</p>
                                   </div>
                                   <div>
                                     <p className="text-xs text-slate-500">Contact</p>
@@ -671,6 +941,61 @@ export const OrderList: React.FC = () => {
                                         </div>
                                       )}
                                     </div>
+                                    
+                                    {/* Package Images */}
+                                    {(() => {
+                                      // Try to get images from multiple sources
+                                      let images: string[] = [];
+                                      
+                                      // First check photoUrls (standard field)
+                                      if (pkg.photoUrls && pkg.photoUrls.length > 0) {
+                                        images = pkg.photoUrls;
+                                      }
+                                      // Then check images field from n8n (might be string or array)
+                                      else if ((pkg as any).images) {
+                                        try {
+                                          const imgData = (pkg as any).images;
+                                          if (typeof imgData === 'string') {
+                                            // Parse string JSON to array
+                                            images = JSON.parse(imgData);
+                                          } else if (Array.isArray(imgData)) {
+                                            images = imgData;
+                                          }
+                                        } catch (e) {
+                                          console.error('Failed to parse images:', e);
+                                          images = [];
+                                        }
+                                      }
+                                      
+                                      return images.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t border-slate-100">
+                                          <div className="flex items-center gap-2 mb-2">
+                                            <Camera size={14} className="text-slate-500" />
+                                            <span className="text-xs font-medium text-slate-600">{images.length} عکس</span>
+                                          </div>
+                                          <div className="flex gap-2 flex-wrap">
+                                            {images.map((imgUrl: string, idx: number) => (
+                                              <a 
+                                                key={idx}
+                                                href={imgUrl} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                className="block w-16 h-16 rounded border border-slate-200 overflow-hidden hover:ring-2 hover:ring-blue-400 transition-all"
+                                              >
+                                                <img 
+                                                  src={imgUrl} 
+                                                  alt={`Package ${idx + 1}`}
+                                                  className="w-full h-full object-cover"
+                                                  onError={(e) => {
+                                                    (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect fill="%23f1f5f9" width="64" height="64"/%3E%3Ctext x="50%25" y="50%25" font-size="24" text-anchor="middle" dy=".3em" fill="%2394a3b8"%3E?%3C/text%3E%3C/svg%3E';
+                                                  }}
+                                                />
+                                              </a>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                               ))}
@@ -695,6 +1020,32 @@ export const OrderList: React.FC = () => {
             </tbody>
           </table>
         </div>
+        
+        {/* Load More Button */}
+        {filteredOrders.length > displayedOrders.length && (
+          <div className="p-4 border-t border-slate-100 flex justify-center">
+            <button
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+              className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isLoadingMore ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  در حال بارگذاری...
+                </>
+              ) : (
+                <>
+                  بارگذاری بیشتر ({filteredOrders.length - displayedOrders.length} سفارش دیگر)
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* CREATE ORDER MODAL */}
@@ -767,6 +1118,15 @@ export const OrderList: React.FC = () => {
                         />
                       </div>
                       <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="آیدی اینستاگرام (اختیاری)"
+                          value={newInstagramId}
+                          onChange={(e) => setNewInstagramId(e.target.value)}
+                          className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 text-right"
+                        />
+                      </div>
+                      <div className="relative">
                         <MapPin className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                         <input
                           type="text"
@@ -774,6 +1134,15 @@ export const OrderList: React.FC = () => {
                           value={newCustomerAddress}
                           onChange={(e) => setNewCustomerAddress(e.target.value)}
                           className="w-full pr-10 pl-4 py-2.5 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 text-right"
+                        />
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="url"
+                          placeholder="لینک پست تلگرام (اختیاری)"
+                          value={newTelPost}
+                          onChange={(e) => setNewTelPost(e.target.value)}
+                          className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 text-right"
                         />
                       </div>
                       <div className="relative md:col-span-2">
@@ -1012,6 +1381,210 @@ export const OrderList: React.FC = () => {
                 >
                   ثبت پرداخت
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT ORDER MODAL */}
+      {isEditModalOpen && editingOrder && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50 rounded-t-2xl flex-row-reverse">
+              <div className="text-right">
+                <h3 className="text-xl font-bold text-slate-800">ویرایش سفارش {editingOrder.id}</h3>
+                <p className="text-sm text-slate-500">اصلاح اطلاعات مشتری، محصولات و پرداخت‌ها</p>
+              </div>
+              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Customer Info */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2 text-right">اطلاعات مشتری</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <input
+                    type="text"
+                    placeholder="نام مشتری"
+                    value={editCustomerName}
+                    onChange={(e) => setEditCustomerName(e.target.value)}
+                    className="px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right"
+                  />
+                  <input
+                    type="text"
+                    placeholder="شماره تلفن"
+                    value={editCustomerPhone}
+                    onChange={(e) => setEditCustomerPhone(e.target.value)}
+                    className="px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right"
+                  />
+                  <input
+                    type="text"
+                    placeholder="آیدی اینستاگرام"
+                    value={editInstagramId}
+                    onChange={(e) => setEditInstagramId(e.target.value)}
+                    className="px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right"
+                  />
+                  <input
+                    type="text"
+                    placeholder="آدرس"
+                    value={editCustomerAddress}
+                    onChange={(e) => setEditCustomerAddress(e.target.value)}
+                    className="px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right md:col-span-2"
+                  />
+                  <input
+                    type="url"
+                    placeholder="لینک پست تلگرام"
+                    value={editTelPost}
+                    onChange={(e) => setEditTelPost(e.target.value)}
+                    className="px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right"
+                  />
+                </div>
+              </div>
+
+              {/* Source */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2 text-right">منبع / پلتفرم</label>
+                <select
+                  value={editOrderSource}
+                  onChange={(e) => setEditOrderSource(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-right"
+                >
+                  <option value="1688">1688</option>
+                  <option value="Taobao">Taobao</option>
+                  <option value="Shein">Shein</option>
+                  <option value="YesStyle">YesStyle</option>
+                  <option value="AliExpress">AliExpress</option>
+                  <option value="Other">سایر</option>
+                </select>
+              </div>
+
+              {/* Products */}
+              <div>
+                <div className="flex justify-between items-center mb-2 flex-row-reverse">
+                  <label className="block text-sm font-semibold text-slate-700 text-right">محصولات سفارش</label>
+                  <span className="text-xs text-slate-400">تعداد: {editOrderItems.length}</span>
+                </div>
+
+                <div className="space-y-4">
+                  {editOrderItems.map((item, idx) => (
+                    <div key={idx} className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                      <div className="flex gap-2 items-start">
+                        <button
+                          onClick={() => handleRemoveEditItem(idx)}
+                          className="p-2 text-slate-400 hover:text-red-500 transition-colors shrink-0"
+                          title="حذف"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                        
+                        <div className="flex-1 space-y-3">
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1 text-right">نام / توضیحات محصول</label>
+                            <input
+                              type="text"
+                              value={item.description}
+                              onChange={(e) => handleEditItemChange(idx, 'description', e.target.value)}
+                              className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm text-right"
+                            />
+                          </div>
+                          
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1 text-right">لینک محصول</label>
+                            <input
+                              type="url"
+                              value={item.link}
+                              onChange={(e) => handleEditItemChange(idx, 'link', e.target.value)}
+                              className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm text-right"
+                            />
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1 text-right">تعداد</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={item.qty}
+                                onChange={(e) => handleEditItemChange(idx, 'qty', parseInt(e.target.value) || 1)}
+                                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm text-right"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1 text-right">واحد</label>
+                              <select
+                                value={item.currency}
+                                onChange={(e) => handleEditItemChange(idx, 'currency', e.target.value)}
+                                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm text-right"
+                              >
+                                <option value="AED">درهم</option>
+                                <option value="IRR">تومان</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1 text-right">قیمت واحد</label>
+                              <input
+                                type="number"
+                                value={item.price}
+                                onChange={(e) => handleEditItemChange(idx, 'price', e.target.value)}
+                                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm text-right"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={handleAddEditItem}
+                  className="mt-4 text-sm text-orange-600 font-medium flex items-center gap-1 hover:underline flex-row-reverse"
+                >
+                  <span>افزودن محصول دیگر</span>
+                  <Plus size={16} />
+                </button>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t border-slate-100 pt-6 bg-slate-50 p-4 rounded-lg">
+                <div className="flex flex-col md:flex-row gap-6 justify-between">
+                  <div className="flex gap-8 text-right items-center flex-row-reverse">
+                    <button
+                      onClick={handleSaveEditedOrder}
+                      className="mr-4 px-8 py-3 bg-orange-600 text-white rounded-xl font-bold hover:bg-orange-700 shadow-lg shadow-orange-200 transition-all transform hover:-translate-y-0.5"
+                    >
+                      ذخیره تغییرات
+                    </button>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-500 font-semibold">جمع کل</p>
+                      <p className="text-xl font-bold text-slate-800">{(calculateEditTotal() * exchangeRate).toLocaleString('fa-IR')} تومان</p>
+                      <p className="text-xs text-slate-400">{calculateEditTotal().toFixed(2)} درهم</p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 max-w-sm space-y-2">
+                    <label className="block text-sm font-semibold text-slate-700 text-right">مبلغ پرداخت شده</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={editPaymentCurrency}
+                        onChange={(e) => setEditPaymentCurrency(e.target.value)}
+                        className="w-24 px-2 py-2.5 border border-slate-300 rounded-lg focus:ring-1 focus:ring-orange-500 text-sm text-right"
+                      >
+                        <option value="AED">درهم</option>
+                        <option value="IRR">تومان</option>
+                      </select>
+                      <input
+                        type="number"
+                        value={editAmountPaid}
+                        onChange={(e) => setEditAmountPaid(e.target.value)}
+                        className="flex-1 px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-1 focus:ring-orange-500 text-right"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

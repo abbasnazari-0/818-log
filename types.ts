@@ -93,7 +93,9 @@ export interface Order {
   customerId: string;
   customerName: string; // Denormalized for ease
   customerPhone?: string;
-  shippingAddress?: string;
+  instagramId?: string; // Instagram username/ID
+  tel_post?: string; // Telegram post link
+  address?: string;
   source: '1688' | 'Taobao' | 'Shein' | 'YesStyle' | 'AliExpress' | 'Other';
   createdAt: number;
   totalItems: number;

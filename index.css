@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import url('https://cdn.font.ir/css?family=Vazirmatn');
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn');
 
 @layer base {
     body {

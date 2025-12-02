@@ -122,6 +122,35 @@ class DataService {
     }
   }
 
+  async updateOrder(order: Order): Promise<void> {
+    try {
+      const batch = writeBatch(db);
+      
+      // Update the main order document
+      const orderRef = doc(db, 'orders', order.id);
+      batch.set(orderRef, order);
+      
+      // Update all packages in the standalone packages collection
+      order.packages.forEach(pkg => {
+        const pkgRef = doc(db, 'packages', pkg.id);
+        batch.set(pkgRef, pkg);
+      });
+      
+      await batch.commit();
+      
+      await this.logAction({
+        action: 'ORDER_UPDATED',
+        userId: 'admin',
+        userName: 'Admin',
+        details: `Order ${order.id} was updated.`,
+        severity: 'INFO'
+      });
+    } catch (error) {
+      console.error("Error updating order:", error);
+      throw error;
+    }
+  }
+
   // --- Packages ---
 
   async getPackageById(packageId: string): Promise<Package | undefined> {
@@ -432,7 +461,7 @@ class DataService {
     customerId: string;
     customerName: string;
     customerPhone?: string;
-    shippingAddress?: string;
+    address?: string;
     totalOrders: number;
     lastOrderDate: number;
     lastOrderId: string;
@@ -456,25 +485,27 @@ class DataService {
         customerUserMap.set(user.uid, user);
       });
 
-      // Group orders by customerId
+      // Group orders by customerName (since customerId might be generic like 'undefined')
       const customerMap = new Map<string, Order[]>();
       orders.forEach(order => {
-        const existing = customerMap.get(order.customerId) || [];
+        // Use customerName as the grouping key instead of customerId
+        const key = order.customerName || order.customerId;
+        const existing = customerMap.get(key) || [];
         existing.push(order);
-        customerMap.set(order.customerId, existing);
+        customerMap.set(key, existing);
       });
 
       // Transform to customer summary array
-      const customers = Array.from(customerMap.entries()).map(([customerId, customerOrders]) => {
+      const customers = Array.from(customerMap.entries()).map(([customerKey, customerOrders]) => {
         // Sort orders by date (newest first)
         const sortedOrders = customerOrders.sort((a, b) => b.createdAt - a.createdAt);
         const lastOrder = sortedOrders[0];
 
         // Get customer info from users collection if available, otherwise use order data
-        const customerUser = customerUserMap.get(customerId);
-        const customerName = customerUser?.displayName || lastOrder.customerName;
-        const customerPhone = customerUser?.phoneNumber || lastOrder.customerPhone;
-        const shippingAddress = customerUser?.address || lastOrder.shippingAddress;
+        const customerUser = customerUserMap.get(lastOrder.customerId);
+        const customerName = lastOrder.customerName || customerUser?.displayName || customerKey;
+        const customerPhone = lastOrder.customerPhone || customerUser?.phoneNumber;
+        const address = lastOrder.address || customerUser?.address;
 
         // Count delivered vs pending orders
         // An order is considered delivered if all packages are DELIVERED
@@ -486,10 +517,10 @@ class DataService {
         const pendingOrders = customerOrders.length - deliveredOrders;
 
         return {
-          customerId,
+          customerId: lastOrder.customerId,
           customerName,
           customerPhone,
-          shippingAddress,
+          address,
           totalOrders: customerOrders.length,
           lastOrderDate: lastOrder.createdAt,
           lastOrderId: lastOrder.id,
@@ -569,7 +600,7 @@ class DataService {
         const updateData: any = {};
         if (updates.displayName) updateData.customerName = updates.displayName;
         if (updates.phoneNumber) updateData.customerPhone = updates.phoneNumber;
-        if (updates.address) updateData.shippingAddress = updates.address;
+        if (updates.address) updateData.address = updates.address;
         batch.update(orderRef, updateData);
       });
       

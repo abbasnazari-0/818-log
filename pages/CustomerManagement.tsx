@@ -8,7 +8,7 @@ interface CustomerSummary {
   customerId: string;
   customerName: string;
   customerPhone?: string;
-  shippingAddress?: string;
+  address?: string;
   totalOrders: number;
   lastOrderDate: number;
   lastOrderId: string;
@@ -20,9 +20,12 @@ interface CustomerSummary {
 export const CustomerManagement: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<CustomerSummary[]>([]);
+  const [displayedCustomers, setDisplayedCustomers] = useState<CustomerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [customersLimit, setCustomersLimit] = useState(20);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ name: string; phone: string; address: string }>({
     name: '',
@@ -54,18 +57,30 @@ export const CustomerManagement: React.FC = () => {
       const filtered = customers.filter(customer => 
         customer.customerName.toLowerCase().includes(term) ||
         customer.customerPhone?.toLowerCase().includes(term) ||
-        customer.shippingAddress?.toLowerCase().includes(term)
+        customer.address?.toLowerCase().includes(term)
       );
       setFilteredCustomers(filtered);
     }
   }, [searchTerm, customers]);
+
+  useEffect(() => {
+    setDisplayedCustomers(filteredCustomers.slice(0, customersLimit));
+  }, [filteredCustomers, customersLimit]);
+
+  const handleLoadMore = () => {
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setCustomersLimit(prev => prev + 20);
+      setIsLoadingMore(false);
+    }, 300);
+  };
 
   const handleEditClick = (customer: CustomerSummary) => {
     setEditingCustomerId(customer.customerId);
     setEditForm({
       name: customer.customerName,
       phone: customer.customerPhone || '',
-      address: customer.shippingAddress || ''
+      address: customer.address || ''
     });
   };
 
@@ -85,7 +100,7 @@ export const CustomerManagement: React.FC = () => {
       // Update local state
       const updatedCustomers = customers.map(c => 
         c.customerId === customerId 
-          ? { ...c, customerName: editForm.name, customerPhone: editForm.phone, shippingAddress: editForm.address }
+          ? { ...c, customerName: editForm.name, customerPhone: editForm.phone, address: editForm.address }
           : c
       );
       setCustomers(updatedCustomers);
@@ -105,7 +120,10 @@ export const CustomerManagement: React.FC = () => {
   };
 
   const getPendingCount = (orders: Order[]) => {
-    return orders.length - getDeliveredCount(orders);
+    return orders.filter(o => 
+      o.packages.length > 0 && 
+      o.packages.some(pkg => pkg.currentStatus !== PackageStatus.DELIVERED)
+    ).length;
   };
 
   const getStatusColor = (status: PackageStatus): string => {
@@ -147,8 +165,8 @@ export const CustomerManagement: React.FC = () => {
         </div>
       </div>
 
-      <div className="space-y-4">
-        {filteredCustomers.map((customer) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {displayedCustomers.map((customer) => (
           <div
             key={customer.customerId}
             className="bg-white rounded-lg shadow-md overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow"
@@ -212,9 +230,9 @@ export const CustomerManagement: React.FC = () => {
                         <span>{customer.customerPhone || 'بدون شماره'}</span>
                         <Phone size={14} />
                       </div>
-                      {customer.shippingAddress && (
+                      {customer.address && (
                         <div className="flex items-start gap-2 mt-1 text-sm text-slate-600 justify-end">
-                          <span className="text-right">{customer.shippingAddress}</span>
+                          <span className="text-right">{customer.address}</span>
                           <MapPin size={14} className="shrink-0 mt-0.5" />
                         </div>
                       )}
@@ -233,15 +251,15 @@ export const CustomerManagement: React.FC = () => {
                   >
                     <div className="flex items-center gap-8 mr-4">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-blue-600">{customer.totalOrders}</p>
+                  <p className="text-2xl font-bold text-blue-600">{customer.orders.length}</p>
                   <p className="text-xs text-slate-500">کل خریدها</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-semibold text-green-600">{customer.deliveredOrders}</p>
+                  <p className="text-sm font-semibold text-green-600">{getDeliveredCount(customer.orders)}</p>
                   <p className="text-xs text-slate-500">تحویل شده</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-semibold text-amber-600">{customer.pendingOrders}</p>
+                  <p className="text-sm font-semibold text-amber-600">{getPendingCount(customer.orders)}</p>
                   <p className="text-xs text-slate-500">در حال ارسال</p>
                 </div>
                 <div className="text-center">
@@ -292,6 +310,32 @@ export const CustomerManagement: React.FC = () => {
             )}
           </div>
         ))}
+        
+        {/* Load More Button */}
+        {filteredCustomers.length > displayedCustomers.length && (
+          <div className="flex justify-center py-6">
+            <button
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+              className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isLoadingMore ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  در حال بارگذاری...
+                </>
+              ) : (
+                <>
+                  بارگذاری بیشتر ({filteredCustomers.length - displayedCustomers.length} مشتری دیگر)
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

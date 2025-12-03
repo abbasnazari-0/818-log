@@ -22,6 +22,8 @@ export const ScanQR: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState<PackageStatus | null>(null);
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
+  const [showPackageSelection, setShowPackageSelection] = useState(false);
 
   // Check URL parameters for preloaded package code
   useEffect(() => {
@@ -57,23 +59,54 @@ export const ScanQR: React.FC = () => {
         pkg = await dataService.getPackageByInternalTrackingCode(searchCode);
       }
 
-      // Try 3: If it's an order ID, get first package from order
+      // Try 3: If it's an order ID, show package selection if multiple packages
       if (!pkg && searchCode.startsWith('ORD-')) {
         const order = await dataService.getOrderById(searchCode);
         if (order && order.packages.length > 0) {
-          // Try to get package from packages collection first
-          const packageId = order.packages[0].id;
-          pkg = await dataService.getPackageById(packageId);
-          
-          // If not found in collection, use package data from order
-          if (!pkg) {
-            pkg = order.packages[0];
-          }
           setScannedOrderId(searchCode);
+          
+          // Get all packages with their latest data
+          const packagePromises = order.packages.map(async (orderPkg) => {
+            const pkgFromDb = await dataService.getPackageById(orderPkg.id);
+            if (pkgFromDb) {
+              return pkgFromDb;
+            }
+            // Fallback to package data from order
+            if (!orderPkg.orderId) {
+              orderPkg.orderId = searchCode;
+            }
+            return orderPkg;
+          });
+          
+          const packages = await Promise.all(packagePromises);
+          
+          // If only one package, select it automatically
+          if (packages.length === 1) {
+            pkg = packages[0];
+            if (!pkg.orderId) {
+              pkg.orderId = searchCode;
+            }
+          } else {
+            // Multiple packages - show selection UI
+            setAvailablePackages(packages);
+            setShowPackageSelection(true);
+            setLoading(false);
+            return; // Exit early, let user select
+          }
         }
       }
 
       if (pkg) {
+        // Ensure package has a valid currentStatus
+        if (!pkg.currentStatus) {
+          pkg.currentStatus = PackageStatus.PURCHASED_FROM_SELLER;
+        }
+        
+        // Ensure orderId is set
+        if (!pkg.orderId && scannedOrderId) {
+          pkg.orderId = scannedOrderId;
+        }
+        
         setScannedPackage(pkg);
         setUpdateMode(true);
         setWeight(pkg.weight?.toString() || '');
@@ -103,51 +136,80 @@ export const ScanQR: React.FC = () => {
         return;
       }
 
-      // Request camera permission explicitly
+      const codeReader = new BrowserQRCodeReader();
+      codeReaderRef.current = codeReader;
+
+      // Get video element
+      const videoElement = videoRef.current!;
+
+      // Simple constraints - just back camera
+      const constraints = {
+        video: { 
+          facingMode: { ideal: 'environment' }
+        }
+      };
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        // Stop the test stream
-        stream.getTracks().forEach(track => track.stop());
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoElement.srcObject = stream;
+        videoElement.setAttribute('playsinline', 'true');
+        
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          videoElement.onloadedmetadata = () => {
+            videoElement.play().then(() => resolve(true));
+          };
+        });
+        
+        console.log('📹 دوربین آماده شد، شروع اسکن...');
+
+        // Start continuous scanning
+        const scanBarcode = async () => {
+          if (!isCameraOpen || !codeReaderRef.current) return;
+          
+          try {
+            const result = await codeReader.decodeOnceFromVideoElement(videoElement);
+            if (result) {
+              const scannedText = result.getText();
+              console.log('✅ بارکد خوانده شد:', scannedText);
+              setScanInput(scannedText);
+              stopCamera();
+              // Trigger search
+              setTimeout(() => {
+                const form = document.querySelector('form');
+                if (form) form.requestSubmit();
+              }, 100);
+              return; // Stop scanning after success
+            }
+          } catch (error: any) {
+            // Keep scanning if not found - NotFoundException is normal when no barcode in frame
+            if (error.name === 'NotFoundException') {
+              // Continue scanning
+            } else {
+              console.error('خطای اسکن:', error);
+            }
+          }
+          
+          // Continue scanning
+          if (isCameraOpen && codeReaderRef.current) {
+            setTimeout(() => scanBarcode(), 300);
+          }
+        };
+
+        // Start scanning loop after a small delay
+        setTimeout(() => scanBarcode(), 800);
       } catch (permissionError: any) {
+        console.error('Permission error:', permissionError);
         if (permissionError.name === 'NotAllowedError' || permissionError.name === 'PermissionDeniedError') {
           setError('دسترسی به دوربین رد شد! لطفاً در تنظیمات مرورگر، دسترسی به دوربین را مجاز کنید.');
         } else if (permissionError.name === 'NotFoundError') {
           setError('دوربینی یافت نشد! لطفاً دوربین را بررسی کنید.');
         } else {
-          setError('خطا در دسترسی به دوربین! اگر از HTTP استفاده می‌کنید، به HTTPS تغییر دهید یا از localhost استفاده کنید.');
+          setError(`خطا در دسترسی به دوربین: ${permissionError.message || 'لطفاً دوباره تلاش کنید'}`);
         }
         setIsCameraOpen(false);
         return;
       }
-
-      const codeReader = new BrowserQRCodeReader();
-      codeReaderRef.current = codeReader;
-
-      const videoInputDevices = await codeReader.listVideoInputDevices();
-      if (videoInputDevices.length === 0) {
-        setError('دوربینی یافت نشد!');
-        setIsCameraOpen(false);
-        return;
-      }
-
-      const selectedDeviceId = videoInputDevices[0].deviceId;
-
-      await codeReader.decodeFromVideoDevice(
-        selectedDeviceId,
-        videoRef.current!,
-        (result, error) => {
-          if (result) {
-            const scannedText = result.getText();
-            setScanInput(scannedText);
-            stopCamera();
-            // Manually trigger search with the scanned text
-            setTimeout(() => {
-              const form = document.querySelector('form');
-              if (form) form.requestSubmit();
-            }, 100);
-          }
-        }
-      );
     } catch (err: any) {
       console.error('Camera error:', err);
       setError(`خطا در دسترسی به دوربین! ${err.message || 'لطفاً به صورت دستی کد را وارد کنید.'}`);
@@ -156,6 +218,13 @@ export const ScanQR: React.FC = () => {
   };
 
   const stopCamera = () => {
+    // Stop video stream
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    
     if (codeReaderRef.current) {
       codeReaderRef.current.reset();
     }
@@ -163,7 +232,7 @@ export const ScanQR: React.FC = () => {
   };
 
   const getAvailableNextStatuses = (current: PackageStatus): PackageStatus[] => {
-    if (!user) return [];
+    if (!user || !current) return [];
 
     // Define status flows for each region
     const chinaStatuses = [
@@ -203,6 +272,9 @@ export const ScanQR: React.FC = () => {
       // Admin can access all statuses
       allowedStatuses = [...chinaStatuses, ...uaeStatuses, ...iranStatuses];
     }
+
+    // Safety check for allowedStatuses
+    if (!allowedStatuses || allowedStatuses.length === 0) return [];
 
     // Find current status index in allowed statuses
     const currIdx = allowedStatuses.indexOf(current);
@@ -352,6 +424,24 @@ export const ScanQR: React.FC = () => {
     printWindow.document.close();
   };
 
+  const handlePackageSelection = (selectedPkg: Package) => {
+    // Ensure package has a valid currentStatus
+    if (!selectedPkg.currentStatus) {
+      selectedPkg.currentStatus = PackageStatus.PURCHASED_FROM_SELLER;
+    }
+    
+    // Ensure orderId is set
+    if (!selectedPkg.orderId && scannedOrderId) {
+      selectedPkg.orderId = scannedOrderId;
+    }
+    
+    setScannedPackage(selectedPkg);
+    setUpdateMode(true);
+    setWeight(selectedPkg.weight?.toString() || '');
+    setShowPackageSelection(false);
+    setAvailablePackages([]);
+  };
+
   const handleConfirmStatusUpdate = async () => {
     if (!scannedPackage || !user || !selectedStatus) return;
     
@@ -459,7 +549,55 @@ export const ScanQR: React.FC = () => {
         )}
       </div>
 
-      {scannedPackage && (
+      {/* Package Selection UI */}
+      {showPackageSelection && availablePackages.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex justify-between items-center mb-4">
+            <button
+              onClick={() => {
+                setShowPackageSelection(false);
+                setAvailablePackages([]);
+                setScanInput('');
+              }}
+              className="text-slate-600 hover:text-slate-800 flex items-center gap-1 text-sm"
+            >
+              <X size={16} /> انصراف
+            </button>
+            <h3 className="text-lg font-bold text-slate-800 text-right">
+              این سفارش {availablePackages.length} پکیج دارد. لطفاً یکی را انتخاب کنید:
+            </h3>
+          </div>
+          <div className="space-y-3">
+            {availablePackages.map((pkg) => (
+              <button
+                key={pkg.id}
+                onClick={() => handlePackageSelection(pkg)}
+                className="w-full p-4 border-2 border-slate-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-right group"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <p className="font-mono text-sm text-slate-500 mb-1">ID: {pkg.id}</p>
+                    <p className="font-bold text-slate-900">{pkg.description}</p>
+                    <p className="text-sm text-slate-600 mt-1">رهگیری: {pkg.trackingNumber}</p>
+                    {pkg.weight && (
+                      <p className="text-sm text-slate-500 mt-1">وزن: {pkg.weight} کیلوگرم</p>
+                    )}
+                  </div>
+                  <div className="mr-4">
+                    <StatusBadge status={pkg.currentStatus} />
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-end gap-2 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="text-sm font-medium">انتخاب این پکیج</span>
+                  <ArrowRight size={16} />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {scannedPackage && !showPackageSelection && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
           <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
             <div>
@@ -504,7 +642,7 @@ export const ScanQR: React.FC = () => {
             <div className="border-t border-slate-100 pt-6">
               <label className="block text-sm font-bold text-slate-800 mb-3 text-right">تغییر وضعیت به:</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {getAvailableNextStatuses(scannedPackage.currentStatus).map((status) => (
+                {scannedPackage?.currentStatus && getAvailableNextStatuses(scannedPackage.currentStatus)?.map((status) => (
                   <button
                     key={status}
                     onClick={() => setSelectedStatus(status)}
@@ -522,7 +660,7 @@ export const ScanQR: React.FC = () => {
                     </span>
                     {selectedStatus === status && <CheckCircle size={16} className="text-blue-600" />}
                   </button>
-                ))}
+                )) || <p className="text-slate-500 text-sm">هیچ وضعیت بعدی در دسترس نیست</p>}
               </div>
 
               {selectedStatus && (
@@ -591,7 +729,7 @@ export const ScanQR: React.FC = () => {
       )}
 
       {/* Print Label Button - Fixed at bottom */}
-      {scannedPackage && (
+      {scannedPackage && !showPackageSelection && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
           <button 
             onClick={printLabel}

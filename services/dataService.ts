@@ -54,9 +54,9 @@ class DataService {
       await setDoc(doc(db, 'orders', order.id), order);
       
       // Also create standalone package docs
-      order.packages.forEach(async (pkg) => {
-        await setDoc(doc(db, 'packages', pkg.id), pkg);
-      });
+      await Promise.all(
+        order.packages.map(pkg => setDoc(doc(db, 'packages', pkg.id), pkg))
+      );
       
       await this.logAction({
         action: 'ORDER_CREATED',
@@ -214,10 +214,13 @@ class DataService {
     location: string,
     additionalData?: Partial<Package>
   ): Promise<void> {
+    console.log('🔥 updatePackageStatus called:', { packageId, newStatus, userId, notes, location });
     try {
       // 1. Get or create the standalone package document
       const pkgRef = doc(db, 'packages', packageId);
+      console.log('📦 Getting package from collection...');
       const pkgSnap = await getDoc(pkgRef);
+      console.log('📦 Package exists:', pkgSnap.exists());
       
       let currentPkg: Package;
       let orderId: string;
@@ -243,13 +246,36 @@ class DataService {
           throw new Error("Package not found in any order");
         }
         
-        // Create the package in packages collection
-        currentPkg = foundPackage;
+        // Create the package in packages collection with orderId
+        currentPkg = { ...foundPackage, orderId: foundOrderId };
         orderId = foundOrderId;
+        console.log('Creating package in collection with orderId:', orderId);
         await setDoc(pkgRef, currentPkg);
       } else {
         currentPkg = pkgSnap.data() as Package;
         orderId = currentPkg.orderId;
+        console.log('Package orderId from collection:', orderId);
+        
+        // If orderId is missing, try to find it
+        if (!orderId) {
+          console.warn('⚠️ Package missing orderId, searching in orders...');
+          const ordersSnapshot = await getDocs(collection(db, 'orders'));
+          for (const orderDoc of ordersSnapshot.docs) {
+            const order = orderDoc.data() as Order;
+            const pkg = order.packages.find(p => p.id === packageId);
+            if (pkg) {
+              orderId = order.id;
+              console.log('Found orderId:', orderId);
+              // Update package with orderId
+              await updateDoc(pkgRef, { orderId });
+              break;
+            }
+          }
+          
+          if (!orderId) {
+            throw new Error("Cannot find orderId for package");
+          }
+        }
       }
 
       // Update the package
@@ -260,40 +286,52 @@ class DataService {
 
       // 2. Update the package inside the Order document (to keep them in sync)
       // This requires reading the order, finding the package, and updating the array.
+      console.log('Updating order:', orderId, 'for package:', packageId);
       const orderRef = doc(db, 'orders', orderId);
       const orderSnap = await getDoc(orderRef);
       
       if (orderSnap.exists()) {
+        console.log('Order found, updating packages array...');
         const orderData = orderSnap.data() as Order;
         const updatedPackages = orderData.packages.map(p => 
           p.id === packageId ? { ...p, currentStatus: newStatus, ...additionalData } : p
         );
         
+        console.log('Updated packages:', updatedPackages.map(p => ({ id: p.id, status: p.currentStatus })));
+        
         // Determine the overall order status based on all packages
         let overallStatus = newStatus;
         
         // If multiple packages, use the "least advanced" status
-        if (updatedPackages.length > 1) {
+        if (updatedPackages && updatedPackages.length > 1) {
           // Find the package with the earliest status in the workflow
-          const allStatuses = updatedPackages.map(p => p.currentStatus);
+          const allStatuses = updatedPackages.map(p => p?.currentStatus).filter(Boolean);
           const statusOrder = Object.values(PackageStatus);
           
           // Get the minimum status index (earliest in the workflow)
-          let minIndex = statusOrder.length;
-          for (const status of allStatuses) {
-            const idx = statusOrder.indexOf(status);
-            if (idx !== -1 && idx < minIndex) {
-              minIndex = idx;
-              overallStatus = status;
+          if (allStatuses.length > 0 && statusOrder && statusOrder.length > 0) {
+            let minIndex = statusOrder.length;
+            for (const status of allStatuses) {
+              if (status) {
+                const idx = statusOrder.indexOf(status);
+                if (idx !== -1 && idx < minIndex) {
+                  minIndex = idx;
+                  overallStatus = status;
+                }
+              }
             }
           }
         }
         
         // Update both packages array and overall order status
+        console.log('Updating order document with new status:', overallStatus);
         await updateDoc(orderRef, { 
           packages: updatedPackages,
           status: overallStatus
         });
+        console.log('Order updated successfully!');
+      } else {
+        console.error('Order not found in database:', orderId);
       }
 
       // 3. Log Tracking Event

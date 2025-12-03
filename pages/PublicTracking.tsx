@@ -23,6 +23,14 @@ export const PublicTracking: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [packageData, setPackageData] = useState<PackageType | null>(null);
     const [error, setError] = useState('');
+    const [availablePackages, setAvailablePackages] = useState<PackageType[]>([]);
+    const [showPackageSelection, setShowPackageSelection] = useState(false);
+
+    const handlePackageSelection = (selectedPkg: PackageType) => {
+        setPackageData(selectedPkg);
+        setShowPackageSelection(false);
+        setAvailablePackages([]);
+    };
 
     const handleTrack = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -31,6 +39,8 @@ export const PublicTracking: React.FC = () => {
         setLoading(true);
         setError('');
         setPackageData(null);
+        setShowPackageSelection(false);
+        setAvailablePackages([]);
 
         try {
             const code = trackingCode.trim();
@@ -39,11 +49,32 @@ export const PublicTracking: React.FC = () => {
             // Try as Package ID first
             pkg = await dataService.getPackageById(code);
 
-            // If not found, try as Order ID and get first package
+            // If not found, try as Order ID and show package selection if multiple
             if (!pkg && code.startsWith('ORD-')) {
                 const order = await dataService.getOrderById(code);
+                
                 if (order && order.packages.length > 0) {
-                    pkg = order.packages[0];
+                    let packages = order.packages;
+                    
+                    // Ensure all packages have orderId set
+                    packages = packages.map(p => ({
+                        ...p,
+                        orderId: p.orderId || code
+                    }));
+                    
+                    console.log('📦 Found packages from order:', packages.length, packages);
+                    
+                    // If only one package, select automatically
+                    if (packages.length === 1) {
+                        pkg = packages[0];
+                    } else {
+                        // Multiple packages - show selection
+                        console.log('🎯 Showing package selection for', packages.length, 'packages');
+                        setAvailablePackages(packages);
+                        setShowPackageSelection(true);
+                        setLoading(false);
+                        return; // Exit early
+                    }
                 }
             }
 
@@ -119,8 +150,56 @@ export const PublicTracking: React.FC = () => {
                     )}
                 </div>
 
+                {/* Package Selection */}
+                {showPackageSelection && availablePackages.length > 0 && (
+                    <div className="bg-white rounded-xl shadow-xl border border-slate-100 p-5 sm:p-6 animate-fade-in">
+                        <div className="flex justify-between items-center mb-4">
+                            <button
+                                onClick={() => {
+                                    setShowPackageSelection(false);
+                                    setAvailablePackages([]);
+                                }}
+                                className="text-slate-600 hover:text-slate-800 flex items-center gap-1 text-sm font-medium hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all"
+                            >
+                                <AlertCircle size={16} /> بازگشت
+                            </button>
+                            <h3 className="text-lg sm:text-xl font-bold text-slate-800 text-right">
+                                این سفارش {availablePackages.length} بسته دارد
+                            </h3>
+                        </div>
+                        <p className="text-slate-500 text-center mb-5 text-sm">لطفاً یک بسته را برای مشاهده جزئیات انتخاب کنید</p>
+                        <div className="space-y-3">
+                            {availablePackages.map((pkg) => (
+                                <button
+                                    key={pkg.id}
+                                    onClick={() => handlePackageSelection(pkg)}
+                                    className="w-full p-4 border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:bg-gradient-to-br hover:from-blue-50 hover:to-slate-50 transition-all text-right group hover:shadow-lg"
+                                >
+                                    <div className="flex justify-between items-start gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-mono text-xs text-slate-500 mb-1.5">ID: {pkg.id}</p>
+                                            <p className="font-bold text-slate-900 text-sm sm:text-base mb-1">{pkg.description}</p>
+                                            <p className="text-xs text-slate-600 mb-2">کد رهگیری: {pkg.trackingNumber}</p>
+                                            {pkg.weight && (
+                                                <p className="text-xs text-slate-500">وزن: {pkg.weight} کیلوگرم</p>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-col items-end gap-2">
+                                            <StatusBadge status={pkg.currentStatus} />
+                                            <div className="flex items-center gap-1 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <span className="text-xs font-bold">مشاهده</span>
+                                                <ArrowRight size={14} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 {/* Results */}
-                {packageData && (
+                {packageData && !showPackageSelection && (
                     <div className="space-y-4 animate-fade-in">
                         {/* Package Info Card */}
                         <div className="bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden">
@@ -151,7 +230,7 @@ export const PublicTracking: React.FC = () => {
                                     </div>
                                     <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-lg p-3 border border-slate-200 hover:shadow-md transition-shadow">
                                         <p className="text-slate-500 text-xs font-semibold mb-1">شماره سفارش</p>
-                                        <p className="font-bold text-slate-800 text-sm">{packageData.orderId}</p>
+                                        <p className="font-bold text-slate-800 text-sm">{packageData.orderId || '-'}</p>
                                     </div>
                                     {packageData.weight && (
                                         <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-lg p-3 border border-slate-200 hover:shadow-md transition-shadow">

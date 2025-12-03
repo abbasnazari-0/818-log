@@ -10,6 +10,7 @@ export const ScanQR: React.FC = () => {
   const { user } = useAuth();
   const [scanInput, setScanInput] = useState('');
   const [scannedPackage, setScannedPackage] = useState<Package | null>(null);
+  const [scannedOrderId, setScannedOrderId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updateMode, setUpdateMode] = useState(false);
@@ -60,7 +61,15 @@ export const ScanQR: React.FC = () => {
       if (!pkg && searchCode.startsWith('ORD-')) {
         const order = await dataService.getOrderById(searchCode);
         if (order && order.packages.length > 0) {
-          pkg = order.packages[0];
+          // Try to get package from packages collection first
+          const packageId = order.packages[0].id;
+          pkg = await dataService.getPackageById(packageId);
+          
+          // If not found in collection, use package data from order
+          if (!pkg) {
+            pkg = order.packages[0];
+          }
+          setScannedOrderId(searchCode);
         }
       }
 
@@ -68,11 +77,15 @@ export const ScanQR: React.FC = () => {
         setScannedPackage(pkg);
         setUpdateMode(true);
         setWeight(pkg.weight?.toString() || '');
+        // If orderId exists in package, save it
+        if (pkg.orderId) {
+          setScannedOrderId(pkg.orderId);
+        }
       } else {
         setError('بسته یافت نشد. لطفاً کد را بررسی کنید.');
       }
-    } catch (err) {
-      setError('خطا در بازیابی اطلاعات بسته.');
+    } catch (err: any) {
+      setError(`خطا در بازیابی اطلاعات بسته: ${err.message || 'لطفاً دوباره تلاش کنید.'}`);
     } finally {
       setLoading(false);
     }
@@ -232,6 +245,113 @@ export const ScanQR: React.FC = () => {
     setCapturedPhotos(capturedPhotos.filter((_, i) => i !== index));
   };
 
+  const printLabel = async () => {
+    console.log('Print button clicked');
+    if (!scannedPackage) {
+      console.log('No scanned package');
+      return;
+    }
+
+    const orderIdToFetch = scannedOrderId || scannedPackage.orderId;
+    console.log('Getting order:', orderIdToFetch);
+    
+    if (!orderIdToFetch) {
+      console.error('No order ID available');
+      alert('شماره سفارش پیدا نشد!');
+      return;
+    }
+
+    const order = await dataService.getOrderById(orderIdToFetch);
+    if (!order) {
+      console.log('Order not found');
+      alert('سفارش پیدا نشد!');
+      return;
+    }
+    console.log('Order found:', order);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html dir="rtl">
+      <head>
+        <meta charset="UTF-8">
+        <title>لیبل ${order.id}</title>
+        <style>
+          @page { size: 40mm 20mm; margin: 0; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            width: 40mm; height: 20mm; padding: 1mm;
+            font-family: Arial, sans-serif; background: white;
+            display: flex; flex-direction: column;
+          }
+          .header {
+            text-align: center; font-size: 4pt; font-weight: bold;
+            border-bottom: 0.3pt solid #000; padding-bottom: 0.3mm; margin-bottom: 0.5mm;
+          }
+          .barcode { 
+            display: flex; align-items: center; justify-content: center;
+            height: 10mm; margin-bottom: 0.5mm;
+          }
+          .barcode svg { width: 100%; height: 100%; }
+          .info { 
+            font-size: 5pt; line-height: 1.3;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 0.5mm;
+          }
+          .info div { 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          }
+          .label { font-weight: bold; }
+          @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">818 Stylist</div>
+        <div class="barcode">
+          <svg id="barcode"></svg>
+        </div>
+        <div class="info">
+          <div><span class="label">سفارش:</span> ${order.id}</div>
+          <div><span class="label">مشتری:</span> ${order.customerName}</div>
+          <div><span class="label">تلفن:</span> ${order.customerPhone || '-'}</div>
+          <div><span class="label">شناسه داخلی:</span> ${(order as any).internalOrderId || '-'}</div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+        <script>
+          // Wait for JsBarcode to load
+          function generateBarcode() {
+            try {
+              JsBarcode("#barcode", "${order.id}", {
+                format: "CODE128",
+                width: 1,
+                height: 40,
+                displayValue: false,
+                margin: 0
+              });
+              console.log('Barcode generated');
+              setTimeout(() => {
+                window.print();
+                window.onafterprint = () => window.close();
+              }, 300);
+            } catch (e) {
+              console.error('Barcode error:', e);
+              setTimeout(generateBarcode, 100);
+            }
+          }
+          
+          if (typeof JsBarcode !== 'undefined') {
+            generateBarcode();
+          } else {
+            setTimeout(generateBarcode, 200);
+          }
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const handleConfirmStatusUpdate = async () => {
     if (!scannedPackage || !user || !selectedStatus) return;
     
@@ -251,8 +371,8 @@ export const ScanQR: React.FC = () => {
         scannedPackage.id,
         selectedStatus,
         user.uid,
-        'Agent Location Device', // location
         notes, // notes
+        'Agent Location Device', // location
         additionalData
       );
       
@@ -467,6 +587,19 @@ export const ScanQR: React.FC = () => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Print Label Button - Fixed at bottom */}
+      {scannedPackage && (
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+          <button 
+            onClick={printLabel}
+            className="flex items-center gap-2 px-6 py-3 bg-slate-700 hover:bg-slate-800 text-white font-medium rounded-full shadow-2xl transition-all hover:scale-105"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            پرینت لیبل
+          </button>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import { dataService } from '../services/dataService';
 import { Order, PackageStatus, UserRole } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { Package, TrendingUp, AlertTriangle, Clock, Users, CheckCircle, XCircle, ShoppingBag, Calendar, Phone, MapPin, ArrowRight, PackageCheck } from 'lucide-react';
 
@@ -42,6 +42,24 @@ export const Dashboard: React.FC = () => {
   const [displayedCustomers, setDisplayedCustomers] = useState<CustomerSummary[]>([]);
   const [customersLimit, setCustomersLimit] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [timelineView, setTimelineView] = useState<'daily' | 'monthly' | 'yearly'>('monthly');
+  
+  // Get current Persian date for initial values
+  const getCurrentPersianDate = () => {
+    const formatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', {
+      year: 'numeric',
+      month: 'numeric',
+    });
+    const parts = formatter.format(new Date()).split('/');
+    return {
+      year: parseInt(parts[0]),
+      month: parseInt(parts[1]) - 1 // 0-based for consistency
+    };
+  };
+  
+  const initialPersianDate = getCurrentPersianDate();
+  const [selectedMonth, setSelectedMonth] = useState(initialPersianDate.month);
+  const [selectedYear, setSelectedYear] = useState(initialPersianDate.year);
 
   const fetchData = async () => {
     if (user) {
@@ -117,6 +135,82 @@ export const Dashboard: React.FC = () => {
   }, {});
 
   const chartData = Object.keys(statusCounts).map(key => ({ name: key, count: statusCounts[key] }));
+
+  // Helper function to convert Gregorian date to Persian (Jalali) date
+  const toPersianDate = (gregorianDate: Date) => {
+    const formatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    });
+    const parts = formatter.format(gregorianDate).split('/');
+    return {
+      year: parseInt(parts[0]),
+      month: parseInt(parts[1]),
+      day: parseInt(parts[2])
+    };
+  };
+
+  // Prepare Timeline Chart Data (Daily/Monthly/Yearly)
+  const getTimelineData = () => {
+    const dataMap: { [key: string]: number } = {};
+
+    if (timelineView === 'daily') {
+      // Days in selected Persian month
+      const monthDays = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]; // Persian calendar
+      const daysInMonth = monthDays[selectedMonth] || 31;
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        dataMap[day.toString()] = 0;
+      }
+
+      orders.forEach(order => {
+        const orderDate = new Date(order.createdAt);
+        const persianDate = toPersianDate(orderDate);
+        
+        if (persianDate.month === selectedMonth + 1 && persianDate.year === selectedYear) {
+          const day = persianDate.day.toString();
+          dataMap[day]++;
+        }
+      });
+    } else if (timelineView === 'monthly') {
+      // 12 months of selected Persian year
+      const monthNames = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+      for (let i = 0; i < 12; i++) {
+        dataMap[monthNames[i]] = 0;
+      }
+
+      orders.forEach(order => {
+        const orderDate = new Date(order.createdAt);
+        const persianDate = toPersianDate(orderDate);
+        
+        if (persianDate.year === selectedYear) {
+          const monthName = monthNames[persianDate.month - 1];
+          if (monthName) dataMap[monthName]++;
+        }
+      });
+    } else {
+      // Last 5 Persian years
+      const currentPersianYear = toPersianDate(new Date()).year;
+      for (let i = 4; i >= 0; i--) {
+        const year = currentPersianYear - i;
+        dataMap[year.toString()] = 0;
+      }
+
+      orders.forEach(order => {
+        const orderDate = new Date(order.createdAt);
+        const persianDate = toPersianDate(orderDate);
+        const year = persianDate.year.toString();
+        if (dataMap.hasOwnProperty(year)) {
+          dataMap[year]++;
+        }
+      });
+    }
+
+    return Object.keys(dataMap).map(key => ({ name: key, count: dataMap[key] }));
+  };
+
+  const timelineData = getTimelineData();
 
   return (
     <div className="space-y-8">
@@ -251,7 +345,135 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Customers Section */}
+      {/* Timeline Chart - Only for ADMIN */}
+      {user?.role === UserRole.ADMIN && (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex items-center gap-4">
+              <h3 className="text-xl font-bold text-slate-800">آمار سفارشات</h3>
+              {timelineView === 'daily' && (
+                <select
+                  value={`${selectedYear}-${selectedMonth}`}
+                  onChange={(e) => {
+                    const [year, month] = e.target.value.split('-');
+                    setSelectedYear(parseInt(year));
+                    setSelectedMonth(parseInt(month));
+                  }}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const date = new Date();
+                    date.setMonth(date.getMonth() - i);
+                    const formatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', {
+                      year: 'numeric',
+                      month: 'numeric',
+                    });
+                    const parts = formatter.format(date).split('/');
+                    const persianYear = parseInt(parts[0]);
+                    const persianMonth = parseInt(parts[1]) - 1; // 0-based
+                    const monthNames = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+                    
+                    return (
+                      <option key={i} value={`${persianYear}-${persianMonth}`}>
+                        {monthNames[persianMonth]} {persianYear}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+              {timelineView === 'monthly' && (
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 5 }, (_, i) => {
+                    const date = new Date();
+                    date.setFullYear(date.getFullYear() - i);
+                    const formatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', { year: 'numeric' });
+                    const persianYear = parseInt(formatter.format(date));
+                    return persianYear;
+                  }).map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
+              <button
+                onClick={() => setTimelineView('daily')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  timelineView === 'daily'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                روزانه
+              </button>
+              <button
+                onClick={() => setTimelineView('monthly')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  timelineView === 'monthly'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ماهانه
+              </button>
+              <button
+                onClick={() => setTimelineView('yearly')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  timelineView === 'yearly'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                سالانه
+              </button>
+            </div>
+          </div>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={timelineData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  interval={timelineView === 'daily' ? 2 : 0}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  width={40}
+                />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'white', 
+                    border: '1px solid #e2e8f0', 
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                  }}
+                  labelStyle={{ fontWeight: 'bold', color: '#1e293b' }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="count" 
+                  stroke="#10b981" 
+                  strokeWidth={3}
+                  dot={{ fill: '#10b981', r: 4 }}
+                  activeDot={{ r: 6, fill: '#059669' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Customers Section - Only for ADMIN */}
+      {user?.role === UserRole.ADMIN && (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div className="px-4 py-2 bg-slate-100 rounded-lg">
@@ -455,6 +677,7 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

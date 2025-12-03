@@ -192,6 +192,20 @@ class DataService {
     }
   }
 
+  async getPackagesByOrderId(orderId: string): Promise<Package[]> {
+    try {
+      const q = query(
+        collection(db, 'packages'),
+        where('orderId', '==', orderId)
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => doc.data() as Package);
+    } catch (error) {
+      console.error("Error fetching packages by order ID:", error);
+      return [];
+    }
+  }
+
   async updatePackageStatus(
     packageId: string, 
     newStatus: PackageStatus, 
@@ -201,15 +215,44 @@ class DataService {
     additionalData?: Partial<Package>
   ): Promise<void> {
     try {
-      // 1. Update the standalone package document
+      // 1. Get or create the standalone package document
       const pkgRef = doc(db, 'packages', packageId);
       const pkgSnap = await getDoc(pkgRef);
       
-      if (!pkgSnap.exists()) throw new Error("Package not found");
+      let currentPkg: Package;
+      let orderId: string;
       
-      const currentPkg = pkgSnap.data() as Package;
-      const orderId = currentPkg.orderId;
+      if (!pkgSnap.exists()) {
+        // Package not in collection, find it in orders and create it
+        console.log('Package not found in collection, searching in orders...');
+        const ordersSnapshot = await getDocs(collection(db, 'orders'));
+        let foundPackage: Package | undefined;
+        let foundOrderId: string | undefined;
+        
+        for (const orderDoc of ordersSnapshot.docs) {
+          const order = orderDoc.data() as Order;
+          const pkg = order.packages.find(p => p.id === packageId);
+          if (pkg) {
+            foundPackage = pkg;
+            foundOrderId = order.id;
+            break;
+          }
+        }
+        
+        if (!foundPackage || !foundOrderId) {
+          throw new Error("Package not found in any order");
+        }
+        
+        // Create the package in packages collection
+        currentPkg = foundPackage;
+        orderId = foundOrderId;
+        await setDoc(pkgRef, currentPkg);
+      } else {
+        currentPkg = pkgSnap.data() as Package;
+        orderId = currentPkg.orderId;
+      }
 
+      // Update the package
       await updateDoc(pkgRef, {
         currentStatus: newStatus,
         ...additionalData

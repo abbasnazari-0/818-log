@@ -5,7 +5,7 @@ import { dataService } from '../services/dataService';
 import { MOCK_USERS } from '../services/mockData';
 import { Order, PackageStatus, UserRole, Package, Customer } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
-import { Search, Filter, Download, Eye, Plus, X, Trash2, ExternalLink, UserPlus, Phone, MapPin, DollarSign, PackageCheck, Plane, Truck, CheckCircle, Camera } from 'lucide-react';
+import { Search, Filter, Download, Eye, Plus, X, Trash2, ExternalLink, UserPlus, Phone, MapPin, DollarSign, PackageCheck, Plane, Truck, CheckCircle, ScanLine } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -157,7 +157,8 @@ export const OrderList: React.FC = () => {
         o.id?.toLowerCase().includes(lowerTerm) ||
         o.customerName?.toLowerCase().includes(lowerTerm) ||
         o.customerPhone?.includes(lowerTerm) ||
-        o.source?.toLowerCase().includes(lowerTerm)
+        o.source?.toLowerCase().includes(lowerTerm) ||
+        ((o as any).internalOrderId && String((o as any).internalOrderId).toLowerCase().includes(lowerTerm))
       );
     }
 
@@ -672,7 +673,7 @@ export const OrderList: React.FC = () => {
                     <tr className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {(user?.role === 'ADMIN' || user?.role === 'CHINA_AGENT') && (
+                          {user?.role === UserRole.ADMIN && (
                             <>
                               <button
                                 onClick={() => handleDeleteOrder(order.id)}
@@ -692,16 +693,13 @@ export const OrderList: React.FC = () => {
                           )}
                           <button
                             onClick={() => {
-                              // Navigate to ScanQR with the first package ID
-                              const firstPackageId = order.packages[0]?.id;
-                              if (firstPackageId) {
-                                window.location.href = `/scan?code=${firstPackageId}`;
-                              }
+                              // Navigate to ScanQR with the order ID
+                              window.location.href = `/scan?code=${order.id}`;
                             }}
                             className="text-green-600 hover:text-green-800 p-2 hover:bg-green-50 rounded-lg transition-colors"
                             title="اسکن و تغییر وضعیت"
                           >
-                            <Camera size={18} />
+                            <ScanLine size={18} />
                           </button>
                           <button
                             onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)}
@@ -739,8 +737,8 @@ export const OrderList: React.FC = () => {
                       )}
                       <td className="px-6 py-4 text-slate-600">
                         <div>{order.customerName}</div>
-                        {order.customerPhone && <div className="text-xs text-slate-400 mt-0.5">{order.customerPhone}</div>}
-                        {order.instagramId && (
+                        {user?.role === UserRole.ADMIN && order.customerPhone && <div className="text-xs text-slate-400 mt-0.5">{order.customerPhone}</div>}
+                        {user?.role === UserRole.ADMIN && order.instagramId && (
                           <div className="text-xs mt-0.5 flex items-center gap-1">
                             <a
                               href={`https://instagram.com/${order.instagramId.replace('@', '')}`}
@@ -763,7 +761,7 @@ export const OrderList: React.FC = () => {
                             </button>
                           </div>
                         )}
-                        {order.tel_post && (
+                        {user?.role === UserRole.ADMIN && order.tel_post && (
                           <div className="text-xs mt-0.5">
                             <a 
                               href={order.tel_post} 
@@ -802,10 +800,12 @@ export const OrderList: React.FC = () => {
                                     <p className="text-xs text-slate-500">Address</p>
                                     <p className="text-sm text-slate-700 font-medium">{order.address || 'No address provided'}</p>
                                   </div>
-                                  <div>
-                                    <p className="text-xs text-slate-500">Contact</p>
-                                    <p className="text-sm text-slate-700 font-medium">{order.customerPhone || 'No phone provided'}</p>
-                                  </div>
+                                  {user?.role === UserRole.ADMIN && (
+                                    <div>
+                                      <p className="text-xs text-slate-500">Contact</p>
+                                      <p className="text-sm text-slate-700 font-medium">{order.customerPhone || 'No phone provided'}</p>
+                                    </div>
+                                  )}
                                 </div>
                                 {user?.role === UserRole.ADMIN && (
                                   <div className="mt-3 pt-3 border-t border-slate-100">
@@ -942,8 +942,8 @@ export const OrderList: React.FC = () => {
                                       )}
                                     </div>
                                     
-                                    {/* Package Images */}
-                                    {(() => {
+                                    {/* Package Images - Only for ADMIN */}
+                                    {user?.role === UserRole.ADMIN && (() => {
                                       // Try to get images from multiple sources
                                       let images: string[] = [];
                                       
@@ -970,7 +970,7 @@ export const OrderList: React.FC = () => {
                                       return images.length > 0 && (
                                         <div className="mt-3 pt-3 border-t border-slate-100">
                                           <div className="flex items-center gap-2 mb-2">
-                                            <Camera size={14} className="text-slate-500" />
+                                            <ScanLine size={14} className="text-slate-500" />
                                             <span className="text-xs font-medium text-slate-600">{images.length} عکس</span>
                                           </div>
                                           <div className="flex gap-2 flex-wrap">

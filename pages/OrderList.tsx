@@ -366,13 +366,25 @@ export const OrderList: React.FC = () => {
 
   const handleUpdateInternalTrackingCode = async (packageId: string, code: string) => {
     try {
-      await dataService.updatePackageInternalTrackingCode(packageId, code);
+      if (!user) {
+        alert('لطفاً ابتدا وارد سیستم شوید.');
+        return;
+      }
+      
+      if (!code || code.trim() === '') {
+        alert('لطفاً کد رهگیری را وارد کنید.');
+        return;
+      }
+      
+      console.log('Updating tracking code:', { packageId, code, userId: user.uid });
+      await dataService.updatePackageInternalTrackingCode(packageId, code.trim(), user.uid, user.displayName || user.email || 'کاربر');
       setEditingTrackingCode(null);
       fetchOrders(); // Refresh the list
       alert('کد رهگیری داخلی با موفقیت ثبت شد!');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating internal tracking code:', error);
-      alert('خطا در ثبت کد رهگیری. لطفاً دوباره تلاش کنید.');
+      const errorMessage = error?.message || error?.toString() || 'خطای ناشناخته';
+      alert(`خطا در ثبت کد رهگیری: ${errorMessage}\n\nلطفاً دوباره تلاش کنید.`);
     }
   };
 

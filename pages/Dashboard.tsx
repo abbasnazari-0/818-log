@@ -98,6 +98,23 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  const handleSyncPackages = async () => {
+    if (!window.confirm('آیا می‌خواهید پکیج‌های موجود در سفارشات را همگام‌سازی کنید؟\n\nاین عمل پکیج‌های موجود در orders را به collection مستقل packages کپی می‌کند.')) {
+      return;
+    }
+    
+    setRefreshing(true);
+    try {
+      await dataService.syncPackagesToCollection();
+      await fetchData();
+    } catch (error) {
+      console.error('Error syncing packages:', error);
+      alert('خطا در همگام‌سازی پکیج‌ها');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
   }, [user]);
@@ -235,15 +252,27 @@ export const Dashboard: React.FC = () => {
               </>
             )}
           </button>
-          {user?.role === UserRole.ADMIN && orders.length === 0 && (
-            <button
-              onClick={handleSeedDatabase}
-              disabled={refreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-            >
-              <PackageCheck size={16} />
-              <span>پر کردن دیتابیس</span>
-            </button>
+          {user?.role === UserRole.ADMIN && (
+            <>
+              {orders.length === 0 && (
+                <button
+                  onClick={handleSeedDatabase}
+                  disabled={refreshing}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  <PackageCheck size={16} />
+                  <span>پر کردن دیتابیس</span>
+                </button>
+              )}
+              <button
+                onClick={handleSyncPackages}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
+              >
+                <PackageCheck size={16} />
+                <span>همگام‌سازی پکیج‌ها</span>
+              </button>
+            </>
           )}
         </div>
         <div className="text-right">

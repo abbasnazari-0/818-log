@@ -360,44 +360,66 @@ class DataService {
     }
   }
 
-  async updatePackageInternalTrackingCode(packageId: string, internalTrackingCode: string): Promise<void> {
+  async updatePackageInternalTrackingCode(packageId: string, internalTrackingCode: string, userId: string, userName: string): Promise<void> {
     try {
-      // 1. Update the standalone package doc
-      const pkgRef = doc(db, 'packages', packageId);
-      const pkgSnap = await getDoc(pkgRef);
-      if (!pkgSnap.exists()) throw new Error("Package not found");
+      console.log('Starting updatePackageInternalTrackingCode:', { packageId, internalTrackingCode, userId, userName });
       
-      const currentPkg = pkgSnap.data() as Package;
-      const orderId = currentPkg.orderId;
+      // Find the order that contains this package
+      const ordersSnapshot = await getDocs(collection(db, 'orders'));
+      let foundOrder: any = null;
+      let foundPackage: any = null;
 
-      await updateDoc(pkgRef, {
-        internalTrackingCode: internalTrackingCode
-      });
-
-      // 2. Update the package inside the Order document (to keep them in sync)
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
-      
-      if (orderSnap.exists()) {
-        const orderData = orderSnap.data() as Order;
-        const updatedPackages = orderData.packages.map(p => 
-          p.id === packageId ? { ...p, internalTrackingCode } : p
-        );
-        
-        await updateDoc(orderRef, { packages: updatedPackages });
+      for (const orderDoc of ordersSnapshot.docs) {
+        const orderData = orderDoc.data() as Order;
+        const pkg = orderData.packages.find(p => p.id === packageId);
+        if (pkg) {
+          foundOrder = orderData;
+          foundPackage = pkg;
+          break;
+        }
       }
 
-      // 3. Audit Log
+      if (!foundOrder || !foundPackage) {
+        console.error("Package not found in any order:", packageId);
+        throw new Error("بسته پیدا نشد");
+      }
+
+      console.log('Found package in order:', foundOrder.id);
+
+      // Update the package inside the Order document
+      const orderRef = doc(db, 'orders', foundOrder.id);
+      const updatedPackages = foundOrder.packages.map((p: Package) => 
+        p.id === packageId ? { ...p, internalTrackingCode } : p
+      );
+      
+      await updateDoc(orderRef, { packages: updatedPackages });
+      console.log('Updated order doc successfully');
+
+      // Also update standalone package doc if it exists
+      const pkgRef = doc(db, 'packages', packageId);
+      const pkgSnap = await getDoc(pkgRef);
+      if (pkgSnap.exists()) {
+        await updateDoc(pkgRef, { internalTrackingCode });
+        console.log('Updated standalone package doc successfully');
+      } else {
+        // Create standalone package doc if it doesn't exist
+        await setDoc(pkgRef, { ...foundPackage, internalTrackingCode });
+        console.log('Created standalone package doc successfully');
+      }
+
+      // Audit Log
       await this.logAction({
         action: 'TRACKING_CODE_UPDATE',
-        userId: 'admin',
-        userName: 'Admin',
+        userId: userId,
+        userName: userName,
         details: `Internal tracking code updated for package ${packageId}: ${internalTrackingCode}`,
         severity: 'INFO'
       });
+      console.log('Audit log created successfully');
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating internal tracking code:", error);
+      console.error("Error details:", error?.code, error?.message);
       throw error;
     }
   }
@@ -725,6 +747,34 @@ class DataService {
     await batch.commit();
     console.log("Database seeded successfully!");
     alert("Database seeded! Refresh the page.");
+  }
+
+  // Sync existing order packages to standalone packages collection
+  async syncPackagesToCollection() {
+    try {
+      console.log("Starting package sync...");
+      const ordersSnapshot = await getDocs(collection(db, 'orders'));
+      const batch = writeBatch(db);
+      let syncCount = 0;
+
+      ordersSnapshot.docs.forEach(orderDoc => {
+        const orderData = orderDoc.data() as Order;
+        if (orderData.packages && orderData.packages.length > 0) {
+          orderData.packages.forEach(pkg => {
+            const pkgRef = doc(db, 'packages', pkg.id);
+            batch.set(pkgRef, pkg, { merge: true });
+            syncCount++;
+          });
+        }
+      });
+
+      await batch.commit();
+      console.log(`Synced ${syncCount} packages successfully!`);
+      alert(`همگام‌سازی انجام شد! ${syncCount} بسته به collection اضافه شد.`);
+    } catch (error) {
+      console.error("Error syncing packages:", error);
+      alert("خطا در همگام‌سازی. Console را چک کنید.");
+    }
   }
 }
 

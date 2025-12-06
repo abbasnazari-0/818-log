@@ -266,17 +266,17 @@ export const PublicTracking: React.FC = () => {
                                         <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
                                             <Clock size={16} className="text-white" />
                                         </div>
-                                        مراحل ارسال
+                                        ثبت سفارش
                                     </h4>
                                     <div className="space-y-3 pr-1">
                                         {[
-                                            { status: 'PURCHASED_FROM_SELLER', label: 'خریداری شده', icon: Package, active: true },
-                                            { status: 'RECEIVED_IN_CHINA', label: 'دریافت در چین 🇨🇳', icon: MapPin, active: packageData.currentStatus !== 'PURCHASED_FROM_SELLER' },
-                                            { status: 'SHIPPED_TO_UAE', label: 'ارسال به امارات 🇦🇪', icon: Plane, active: packageData.currentStatus.includes('UAE') || packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
-                                            { status: 'ARRIVED_UAE', label: 'رسیده به امارات', icon: MapPin, active: packageData.currentStatus.includes('UAE') || packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
-                                            { status: 'SHIPPED_TO_IRAN', label: 'ارسال به ایران 🇮🇷', icon: Truck, active: packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
-                                            { status: 'OUT_FOR_DELIVERY', label: 'در حال تحویل', icon: Truck, active: packageData.currentStatus === 'OUT_FOR_DELIVERY' || packageData.currentStatus === 'DELIVERED' },
-                                            { status: 'DELIVERED', label: 'تحویل شد ✓', icon: CheckCircle, active: packageData.currentStatus === 'DELIVERED' }
+                                            { status: 'PURCHASED_FROM_SELLER', label: 'آماده‌سازی در انبار', icon: Package, active: true },
+                                            { status: 'RECEIVED_IN_CHINA', label: 'تأیید و بسته‌بندی', icon: MapPin, active: packageData.currentStatus !== 'PURCHASED_FROM_SELLER' },
+                                            { status: 'SHIPPED_TO_UAE', label: 'ارسال به مرکز پردازش', icon: Plane, active: packageData.currentStatus.includes('UAE') || packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
+                                            { status: 'ARRIVED_UAE', label: 'در حال پردازش بین‌المللی', icon: MapPin, active: packageData.currentStatus.includes('UAE') || packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
+                                            { status: 'SHIPPED_TO_IRAN', label: 'ورود به کشور مقصد', icon: Truck, active: packageData.currentStatus.includes('IRAN') || packageData.currentStatus === 'DELIVERED' },
+                                            { status: 'OUT_FOR_DELIVERY', label: 'آماده برای تحویل', icon: Truck, active: packageData.currentStatus === 'OUT_FOR_DELIVERY' || packageData.currentStatus === 'DELIVERED' },
+                                            { status: 'DELIVERED', label: 'تحویل شده', icon: CheckCircle, active: packageData.currentStatus === 'DELIVERED' }
                                         ].map((step, index) => (
                                             <div key={index} className="flex items-center gap-3 relative">
                                                 {index < 6 && (

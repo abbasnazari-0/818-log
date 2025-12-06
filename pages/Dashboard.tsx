@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { Package, TrendingUp, AlertTriangle, Clock, Users, CheckCircle, XCircle, ShoppingBag, Calendar, Phone, MapPin, ArrowRight, PackageCheck } from 'lucide-react';
+import { Package, TrendingUp, AlertTriangle, Clock, Users, CheckCircle, XCircle, ShoppingBag, Calendar, Phone, MapPin, ArrowRight, PackageCheck, ShoppingCart } from 'lucide-react';
 
 const StatCard = ({ title, value, icon: Icon, color }: any) => (
   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-start justify-between">
@@ -43,6 +43,7 @@ export const Dashboard: React.FC = () => {
   const [customersLimit, setCustomersLimit] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [timelineView, setTimelineView] = useState<'daily' | 'monthly' | 'yearly'>('monthly');
+  const [unpurchasedCount, setUnpurchasedCount] = useState({ total: 0, thisMonth: 0 });
   
   // Get current Persian date for initial values
   const getCurrentPersianDate = () => {
@@ -65,12 +66,14 @@ export const Dashboard: React.FC = () => {
     if (user) {
       setRefreshing(true);
       try {
-        const [ordersData, customersData] = await Promise.all([
+        const [ordersData, customersData, unpurchasedData] = await Promise.all([
           dataService.getOrders(user.role, user.uid),
-          dataService.getCustomersWithOrders()
+          dataService.getCustomersWithOrders(),
+          dataService.getUnpurchasedOrdersCount()
         ]);
         setOrders(ordersData);
         setCustomers(customersData);
+        setUnpurchasedCount(unpurchasedData);
         setLoading(false);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
@@ -264,14 +267,14 @@ export const Dashboard: React.FC = () => {
                   <span>پر کردن دیتابیس</span>
                 </button>
               )}
-              <button
+              {/* <button
                 onClick={handleSyncPackages}
                 disabled={refreshing}
                 className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
               >
                 <PackageCheck size={16} />
                 <span>همگام‌سازی پکیج‌ها</span>
-              </button>
+              </button> */}
             </>
           )}
         </div>
@@ -307,6 +310,59 @@ export const Dashboard: React.FC = () => {
           color="bg-emerald-500"
         />
       </div>
+
+      {/* Unpurchased Orders Section - Only for ADMIN */}
+      {user?.role === UserRole.ADMIN && (
+        <div className="bg-linear-to-br from-orange-50 to-amber-50 rounded-xl shadow-sm border border-orange-200 overflow-hidden">
+          <div className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-orange-100 rounded-lg">
+                    <ShoppingCart size={24} className="text-orange-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800">سفارش‌های خریداری نشده</h3>
+                </div>
+                <p className="text-sm text-slate-600 mr-14">سفارش‌هایی که هنوز از فروشنده خریداری نشده‌اند</p>
+              </div>
+              <div className="text-right">
+                <div className="text-4xl font-bold text-orange-600">{unpurchasedCount.total}</div>
+                <div className="text-sm text-slate-500 mt-1">سفارش های خریداری نشده این ماه: <span className="font-semibold text-orange-700">{unpurchasedCount.thisMonth}</span></div>
+              </div>
+            </div>
+            
+            <div className="mt-6 flex flex-col gap-4">
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => window.location.href = '/unpurchased-orders?filter=thisWeek'}
+                  className="px-4 py-2 bg-white border border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 transition-colors font-medium text-sm"
+                >
+                  این هفته
+                </button>
+                <button
+                  onClick={() => window.location.href = '/unpurchased-orders?filter=lastMonth'}
+                  className="px-4 py-2 bg-white border border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 transition-colors font-medium text-sm"
+                >
+                  ماه گذشته
+                </button>
+                <button
+                  onClick={() => window.location.href = '/unpurchased-orders?filter=thisMonth'}
+                  className="px-4 py-2 bg-white border border-orange-300 text-orange-600 rounded-lg hover:bg-orange-50 transition-colors font-medium text-sm"
+                >
+                  این ماه
+                </button>
+              </div>
+              <button
+                onClick={() => window.location.href = '/unpurchased-orders'}
+                className="flex items-center gap-2 px-6 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium shadow-sm justify-end"
+              >
+                <span>نمایش لیست کامل</span>
+                <ArrowRight size={18} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Content Area */}

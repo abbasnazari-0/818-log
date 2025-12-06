@@ -10,6 +10,7 @@ import { Reports } from './pages/Reports';
 import { PublicTracking } from './pages/PublicTracking';
 import { Layout } from './components/Layout';
 import { CustomerManagement } from './pages/CustomerManagement';
+import { UnpurchasedOrders } from './pages/UnpurchasedOrders';
 
 const AppContent = () => {
   const { user, isLoading } = useAuth();
@@ -45,6 +46,7 @@ const AppContent = () => {
           <Route path="reports" element={<Reports />} />
           <Route path="manifest" element={<OrderList />} />
           <Route path="customers" element={<CustomerManagement />} />
+          <Route path="unpurchased-orders" element={<UnpurchasedOrders />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       )}

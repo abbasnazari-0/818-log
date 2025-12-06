@@ -722,6 +722,72 @@ class DataService {
     }
   }
 
+  // --- Get Unpurchased Orders ---
+  async getUnpurchasedOrders(startDate?: number, endDate?: number): Promise<Order[]> {
+    try {
+      let q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      
+      const snapshot = await getDocs(q);
+      const allOrders = snapshot.docs.map(doc => doc.data() as Order);
+      
+      // Filter orders that have at least one package without internalTrackingCode
+      const unpurchasedOrders = allOrders.filter(order => {
+        // Check if order has any package without internalTrackingCode
+        const hasUnpurchasedPackage = order.packages.some(pkg => !pkg.internalTrackingCode);
+        
+        // Apply date filter if provided
+        if (startDate && order.createdAt < startDate) return false;
+        if (endDate && order.createdAt > endDate) return false;
+        
+        return hasUnpurchasedPackage;
+      });
+      
+      return unpurchasedOrders;
+    } catch (error) {
+      console.error("Error fetching unpurchased orders:", error);
+      return [];
+    }
+  }
+
+  // Count unpurchased orders for current month
+  async getUnpurchasedOrdersCount(startDate?: number, endDate?: number): Promise<{ total: number, thisMonth: number }> {
+    try {
+      const unpurchasedOrders = await this.getUnpurchasedOrders(startDate, endDate);
+      
+      // Calculate current Persian month boundaries
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', {
+        year: 'numeric',
+        month: 'numeric',
+      });
+      const parts = formatter.format(now).split('/');
+      const currentYear = parseInt(parts[0]);
+      const currentMonth = parseInt(parts[1]);
+      
+      // Filter for this month
+      const thisMonthOrders = unpurchasedOrders.filter(order => {
+        const orderDate = new Date(order.createdAt);
+        const orderFormatter = new Intl.DateTimeFormat('fa-IR-u-nu-latn', {
+          year: 'numeric',
+          month: 'numeric',
+        });
+        const orderParts = orderFormatter.format(orderDate).split('/');
+        const orderYear = parseInt(orderParts[0]);
+        const orderMonth = parseInt(orderParts[1]);
+        
+        return orderYear === currentYear && orderMonth === currentMonth;
+      });
+      
+      return {
+        total: unpurchasedOrders.length,
+        thisMonth: thisMonthOrders.length
+      };
+    } catch (error) {
+      console.error("Error counting unpurchased orders:", error);
+      return { total: 0, thisMonth: 0 };
+    }
+  }
+
   // --- SEEDING UTILITY ---
   async seedDatabase() {
     const batch = writeBatch(db);

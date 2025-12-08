@@ -424,6 +424,70 @@ class DataService {
     }
   }
 
+  async updatePackageInternalOrderId(packageId: string, internalOrderId: string, userId: string, userName: string): Promise<void> {
+    try {
+      console.log('Starting updatePackageInternalOrderId:', { packageId, internalOrderId, userId, userName });
+      
+      // Find the order that contains this package
+      const ordersSnapshot = await getDocs(collection(db, 'orders'));
+      let foundOrder: any = null;
+      let foundPackage: any = null;
+
+      for (const orderDoc of ordersSnapshot.docs) {
+        const orderData = orderDoc.data() as Order;
+        const pkg = orderData.packages.find(p => p.id === packageId);
+        if (pkg) {
+          foundOrder = orderData;
+          foundPackage = pkg;
+          break;
+        }
+      }
+
+      if (!foundOrder || !foundPackage) {
+        console.error("Package not found in any order:", packageId);
+        throw new Error("بسته پیدا نشد");
+      }
+
+      console.log('Found package in order:', foundOrder.id);
+
+      // Update the package inside the Order document
+      const orderRef = doc(db, 'orders', foundOrder.id);
+      const updatedPackages = foundOrder.packages.map((p: Package) => 
+        p.id === packageId ? { ...p, internalOrderId } : p
+      );
+      
+      await updateDoc(orderRef, { packages: updatedPackages });
+      console.log('Updated order doc successfully');
+
+      // Also update standalone package doc if it exists
+      const pkgRef = doc(db, 'packages', packageId);
+      const pkgSnap = await getDoc(pkgRef);
+      if (pkgSnap.exists()) {
+        await updateDoc(pkgRef, { internalOrderId });
+        console.log('Updated standalone package doc successfully');
+      } else {
+        // Create standalone package doc if it doesn't exist
+        await setDoc(pkgRef, { ...foundPackage, internalOrderId });
+        console.log('Created standalone package doc successfully');
+      }
+
+      // Audit Log
+      await this.logAction({
+        action: 'ORDER_ID_UPDATE',
+        userId: userId,
+        userName: userName,
+        details: `Internal order ID updated for package ${packageId}: ${internalOrderId}`,
+        severity: 'INFO'
+      });
+      console.log('Audit log created successfully');
+
+    } catch (error: any) {
+      console.error("Error updating internal order ID:", error);
+      console.error("Error details:", error?.code, error?.message);
+      throw error;
+    }
+  }
+
   async getTrackingHistory(packageId: string): Promise<TrackingEvent[]> {
     try {
       const q = query(collection(db, 'tracking_events'), where('packageId', '==', packageId), orderBy('timestamp', 'desc'));

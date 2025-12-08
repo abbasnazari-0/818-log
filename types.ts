@@ -79,6 +79,7 @@ export interface Package {
   currentStatus: PackageStatus;
   trackingNumber: string; // Internal or External
   internalTrackingCode?: string; // Internal tracking code (China logistics, Tipax, etc.)
+  internalOrderId?: string; // Internal order ID from 1688, Taobao, etc.
   description: string;
   qrCodeData: string;
   warehouseBin?: string;
@@ -115,7 +116,7 @@ export interface Stats {
 
 export interface AuditLog {
   id: string;
-  action: 'ORDER_CREATED' | 'STATUS_UPDATE' | 'LOGIN' | 'AGENT_CREATED' | 'ISSUE_REPORTED';
+  action: 'ORDER_CREATED' | 'STATUS_UPDATE' | 'LOGIN' | 'AGENT_CREATED' | 'ISSUE_REPORTED' | 'TRACKING_CODE_UPDATE' | 'ORDER_ID_UPDATE' | 'CUSTOMER_UPDATED' | 'ORDER_UPDATED';
   userId: string;
   userName: string;
   details: string;

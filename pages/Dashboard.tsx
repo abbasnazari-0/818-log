@@ -134,7 +134,15 @@ export const Dashboard: React.FC = () => {
     }, 300);
   };
 
-  if (loading) return <div className="flex justify-center p-12 text-slate-400">Loading dashboard...</div>;
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh]">
+      <div className="relative">
+        <div className="w-16 h-16 border-4 border-blue-200 dark:border-blue-900 rounded-full"></div>
+        <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+      </div>
+      <p className="mt-4 text-slate-500 dark:text-slate-400 font-medium">در حال بارگذاری داشبورد...</p>
+    </div>
+  );
 
   // Calculate Stats
   const totalPackages = orders.reduce((acc, order) => acc + order.packages.length, 0);
@@ -236,12 +244,12 @@ export const Dashboard: React.FC = () => {
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <div className="flex gap-2">
-          <button
+          {/* <button
             onClick={fetchData}
             disabled={refreshing}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {refreshing ? (
+          > */}
+            {/* {refreshing ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
                 <span>در حال بارگذاری...</span>
@@ -253,8 +261,8 @@ export const Dashboard: React.FC = () => {
                 </svg>
                 <span>بارگذاری مجدد</span>
               </>
-            )}
-          </button>
+            )} */}
+          {/* </button> */}
           {user?.role === UserRole.ADMIN && (
             <>
               {orders.length === 0 && (

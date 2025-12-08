@@ -28,6 +28,7 @@ export const OrderList: React.FC = () => {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [ordersLimit, setOrdersLimit] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'date' | 'customer' | 'price' | 'status'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
@@ -57,6 +58,9 @@ export const OrderList: React.FC = () => {
   // Internal Tracking Code Management
   const [editingTrackingCode, setEditingTrackingCode] = useState<{ packageId: string; code: string } | null>(null);
   
+  // Internal Order ID Management
+  const [editingOrderId, setEditingOrderId] = useState<{ packageId: string; code: string } | null>(null);
+  
   // Payment Management
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentOrderId, setPaymentOrderId] = useState<string>('');
@@ -76,18 +80,124 @@ export const OrderList: React.FC = () => {
   const [editPaymentCurrency, setEditPaymentCurrency] = useState('AED');
   const [editOrderSource, setEditOrderSource] = useState('1688');
 
+  // Image Lightbox State
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  // تابع چک کردن تغییرات در مدال ایجاد سفارش
+  const hasCreateModalChanges = () => {
+    return (
+      newCustomerName !== '' ||
+      newCustomerPhone !== '' ||
+      newCustomerAddress !== '' ||
+      newInstagramId !== '' ||
+      newTelPost !== '' ||
+      amountPaid !== '' ||
+      orderItems.some(item => item.description !== '' || item.link !== '' || item.price !== '')
+    );
+  };
+
+  // تابع چک کردن تغییرات در مدال ویرایش سفارش
+  const hasEditModalChanges = () => {
+    if (!editingOrder) return false;
+    
+    // چک تغییرات اطلاعات مشتری
+    const customerChanged = 
+      editCustomerName !== editingOrder.customerName ||
+      editCustomerPhone !== (editingOrder.customerPhone || '') ||
+      editCustomerAddress !== (editingOrder.address || '') ||
+      editInstagramId !== (editingOrder.instagramId || '') ||
+      editTelPost !== (editingOrder.tel_post || '') ||
+      editAmountPaid !== (editingOrder.amountPaid || 0).toString();
+    
+    // چک تغییرات پکیج‌ها
+    const packagesChanged = editOrderItems.some((item, index) => {
+      const originalPkg = editingOrder.packages[index];
+      if (!originalPkg) return item.description !== '' || item.link !== '' || item.price !== '';
+      return (
+        item.description !== originalPkg.description ||
+        item.link !== (originalPkg.productLink || '') ||
+        parseFloat(item.price || '0') !== (originalPkg.price || 0)
+      );
+    });
+    
+    // چک اگر تعداد پکیج‌ها تغییر کرده
+    const packageCountChanged = editOrderItems.length !== editingOrder.packages.length;
+    
+    return customerChanged || packagesChanged || packageCountChanged;
+  };
+
+  // تابع بستن مدال ایجاد با تأیید
+  const handleCloseCreateModal = () => {
+    if (hasCreateModalChanges()) {
+      if (window.confirm('تغییرات ذخیره نشده است. آیا مطمئن هستید که می‌خواهید ببندید؟')) {
+        resetCreateModal();
+        setIsModalOpen(false);
+      }
+    } else {
+      setIsModalOpen(false);
+    }
+  };
+
+  // تابع بستن مدال ویرایش با تأیید
+  const handleCloseEditModal = () => {
+    if (hasEditModalChanges()) {
+      if (window.confirm('تغییرات ذخیره نشده است. آیا مطمئن هستید که می‌خواهید ببندید؟')) {
+        setIsEditModalOpen(false);
+        setEditingOrder(null);
+      }
+    } else {
+      setIsEditModalOpen(false);
+      setEditingOrder(null);
+    }
+  };
+
+  // ریست کردن فرم ایجاد سفارش
+  const resetCreateModal = () => {
+    setNewCustomerName('');
+    setNewCustomerPhone('');
+    setNewCustomerAddress('');
+    setNewCustomerEmail('');
+    setNewInstagramId('');
+    setNewTelPost('');
+    setAmountPaid('');
+    setOrderItems([{ link: '', description: '', price: '', currency: 'AED', qty: 1 }]);
+    setSelectedCustomerId('');
+    setIsNewCustomer(false);
+  };
+
+  // هندل کردن دکمه ESC برای بستن مدال‌ها
+  useEffect(() => {
+    const handleEscKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (isModalOpen) {
+          handleCloseCreateModal();
+        } else if (isEditModalOpen) {
+          handleCloseEditModal();
+        } else if (lightboxImage) {
+          setLightboxImage(null);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleEscKey);
+    return () => document.removeEventListener('keydown', handleEscKey);
+  }, [isModalOpen, isEditModalOpen, lightboxImage, hasCreateModalChanges, hasEditModalChanges]);
+
   useEffect(() => {
     fetchOrders();
     fetchCustomers();
     fetchExchangeRate();
   }, [user]);
 
-  const fetchOrders = () => {
+  const fetchOrders = async () => {
     if (user) {
-      dataService.getOrders(user.role, user.uid).then(data => {
+      try {
+        const data = await dataService.getOrders(user.role, user.uid);
         setOrders(data);
         setFilteredOrders(data);
-      });
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -153,13 +263,23 @@ export const OrderList: React.FC = () => {
     // 2. Search Term Filter
     if (searchTerm) {
       const lowerTerm = searchTerm.toLowerCase();
-      result = result.filter(o =>
-        o.id?.toLowerCase().includes(lowerTerm) ||
-        o.customerName?.toLowerCase().includes(lowerTerm) ||
-        o.customerPhone?.includes(lowerTerm) ||
-        o.source?.toLowerCase().includes(lowerTerm) ||
-        ((o as any).internalOrderId && String((o as any).internalOrderId).toLowerCase().includes(lowerTerm))
-      );
+      result = result.filter(o => {
+        // سرچ در اطلاعات سفارش
+        const orderMatch = 
+          o.id?.toLowerCase().includes(lowerTerm) ||
+          o.customerName?.toLowerCase().includes(lowerTerm) ||
+          o.customerPhone?.includes(lowerTerm) ||
+          o.source?.toLowerCase().includes(lowerTerm);
+        
+        // سرچ در پکیج‌ها - کد سفارش داخلی و کد رهگیری داخلی
+        const packageMatch = o.packages?.some(pkg => 
+          pkg.internalOrderId?.toLowerCase().includes(lowerTerm) ||
+          pkg.internalTrackingCode?.toLowerCase().includes(lowerTerm) ||
+          pkg.trackingNumber?.toLowerCase().includes(lowerTerm)
+        );
+        
+        return orderMatch || packageMatch;
+      });
     }
 
     // 3. Sort
@@ -388,6 +508,30 @@ export const OrderList: React.FC = () => {
     }
   };
 
+  const handleUpdateInternalOrderId = async (packageId: string, orderId: string) => {
+    try {
+      if (!user) {
+        alert('لطفاً ابتدا وارد سیستم شوید.');
+        return;
+      }
+      
+      if (!orderId || orderId.trim() === '') {
+        alert('لطفاً کد سفارش را وارد کنید.');
+        return;
+      }
+      
+      console.log('Updating internal order ID:', { packageId, orderId, userId: user.uid });
+      await dataService.updatePackageInternalOrderId(packageId, orderId.trim(), user.uid, user.displayName || user.email || 'کاربر');
+      setEditingOrderId(null);
+      fetchOrders(); // Refresh the list
+      alert('کد سفارش داخلی با موفقیت ثبت شد!');
+    } catch (error: any) {
+      console.error('Error updating internal order ID:', error);
+      const errorMessage = error?.message || error?.toString() || 'خطای ناشناخته';
+      alert(`خطا در ثبت کد سفارش: ${errorMessage}\n\nلطفاً دوباره تلاش کنید.`);
+    }
+  };
+
   const handleOpenEditModal = (order: Order) => {
     setEditingOrder(order);
     setEditCustomerName(order.customerName);
@@ -405,7 +549,7 @@ export const OrderList: React.FC = () => {
       description: pkg.description,
       price: (pkg.price || 0).toString(),
       currency: 'AED',
-      qty: pkg.quantity || 1
+      qty: (pkg as any).quantity || 1
     }));
     setEditOrderItems(items.length > 0 ? items : [{ link: '', description: '', price: '', currency: 'AED', qty: 1 }]);
     
@@ -463,21 +607,34 @@ export const OrderList: React.FC = () => {
         const existingPkg = editingOrder.packages[index];
         const priceInAED = item.currency === 'IRR' ? parseFloat(item.price) / exchangeRate : parseFloat(item.price);
         
-        return {
+        const pkg: Package = {
           id: existingPkg?.id || `PKG-${Date.now()}-${index}`,
           orderId: editingOrder.id,
+          subOrderId: existingPkg?.subOrderId || '',
           trackingNumber: existingPkg?.trackingNumber || '',
           description: item.description,
           weight: existingPkg?.weight || 0,
           currentStatus: existingPkg?.currentStatus || PackageStatus.PURCHASED_FROM_SELLER,
-          productLink: item.link,
-          price: priceInAED,
-          quantity: item.qty,
+          productLink: item.link || '',
+          price: priceInAED || 0,
           qrCodeData: existingPkg?.qrCodeData || JSON.stringify({
             packageId: existingPkg?.id || `PKG-${Date.now()}-${index}`,
             orderId: editingOrder.id,
           }),
         };
+        
+        // حفظ فیلدهای اضافی - فقط اگر مقدار داشته باشند
+        if (existingPkg?.internalTrackingCode) {
+          pkg.internalTrackingCode = existingPkg.internalTrackingCode;
+        }
+        if (existingPkg?.internalOrderId) {
+          pkg.internalOrderId = existingPkg.internalOrderId;
+        }
+        if (existingPkg?.photoUrls && existingPkg.photoUrls.length > 0) {
+          pkg.photoUrls = existingPkg.photoUrls;
+        }
+        
+        return pkg;
       });
 
       const updatedOrder: Order = {
@@ -562,6 +719,18 @@ export const OrderList: React.FC = () => {
   // Get list of existing customers
   const customerList = MOCK_USERS.filter(u => u.role === UserRole.CUSTOMER);
 
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="relative">
+          <div className="w-16 h-16 border-4 border-blue-200 dark:border-blue-900 rounded-full"></div>
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+        </div>
+        <p className="mt-4 text-slate-500 dark:text-slate-400 font-medium">در حال بارگذاری سفارش‌ها...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row-reverse justify-between items-start sm:items-center gap-4">
@@ -616,7 +785,7 @@ export const OrderList: React.FC = () => {
             <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
             <input
               type="text"
-              placeholder="جستجو بر اساس شناسه سفارش، مشتری یا منبع..."
+              placeholder="جستجو: شناسه سفارش، مشتری، کد رهگیری داخلی، کد سفارش داخلی..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
@@ -795,223 +964,261 @@ export const OrderList: React.FC = () => {
                             سفارش داخلی: {(order as any).internalOrderId}
                           </div>
                         )}
+                        <div className="text-slate-400 text-[10px] mt-1 flex items-center gap-1">
+                          <PackageCheck size={10} />
+                          <span>{order.packages?.length || 0} پکیج</span>
+                        </div>
                       </td>
                     </tr>
                     {/* Expanded Detail View */}
                     {selectedOrder?.id === order.id && (
                       <tr className="bg-slate-50/50">
                         <td colSpan={6} className="px-6 py-6">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                            <div className="md:col-span-2">
-                              <div className="bg-white p-4 rounded-lg border border-slate-200 h-full">
-                                <h4 className="font-bold text-slate-800 text-sm mb-2 flex items-center gap-2">
-                                  <MapPin size={14} className="text-blue-500" /> Shipping & Payment
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                    <p className="text-xs text-slate-500">Address</p>
-                                    <p className="text-sm text-slate-700 font-medium">{order.address || 'No address provided'}</p>
-                                  </div>
-                                  {user?.role === UserRole.ADMIN && (
-                                    <div>
-                                      <p className="text-xs text-slate-500">Contact</p>
-                                      <p className="text-sm text-slate-700 font-medium">{order.customerPhone || 'No phone provided'}</p>
-                                    </div>
-                                  )}
+                          <div className="mb-6">
+                            <div className="bg-white p-5 rounded-lg border border-slate-200">
+                              <h4 className="font-bold text-slate-800 text-sm mb-4 flex items-center gap-2">
+                                <MapPin size={14} className="text-blue-500" /> Shipping & Payment
+                              </h4>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                                <div>
+                                  <p className="text-xs text-slate-500">Address</p>
+                                  <p className="text-sm text-slate-700 font-medium">{order.address || 'No address provided'}</p>
                                 </div>
                                 {user?.role === UserRole.ADMIN && (
-                                  <div className="mt-3 pt-3 border-t border-slate-100">
-                                    <div className="grid grid-cols-2 gap-4">
-                                      <div>
-                                        <p className="text-xs text-slate-500">پرداخت شده</p>
-                                        <p className="text-sm text-green-600 font-bold">
-                                          {((order.amountPaid || 0) * exchangeRate).toLocaleString('fa-IR')} تومان
-                                        </p>
-                                        <p className="text-xs text-slate-400">
-                                          {(order.amountPaid || 0).toFixed(2)} درهم
-                                        </p>
-                                      </div>
-                                      <div>
-                                        <p className="text-xs text-slate-500">باقی‌مانده</p>
-                                        <p className="text-sm text-red-600 font-bold">
-                                          {((order.balanceDue || 0) * exchangeRate).toLocaleString('fa-IR')} تومان
-                                        </p>
-                                        <p className="text-xs text-slate-400">
-                                          {(order.balanceDue || 0).toFixed(2)} درهم
-                                        </p>
-                                      </div>
-                                    </div>
-                                    {(order.balanceDue || 0) > 0 && (
-                                      <div className="mt-3 flex gap-2">
-                                        <button
-                                          onClick={() => {
-                                            setPaymentOrderId(order.id);
-                                            setPaymentModalOpen(true);
-                                          }}
-                                          className="flex-1 px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                                        >
-                                          <DollarSign size={14} className="inline ml-1" />
-                                          پرداخت بعدی
-                                        </button>
-                                        <button
-                                          onClick={() => handleSettleFull(order.id)}
-                                          className="flex-1 px-3 py-2 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-colors font-medium"
-                                        >
-                                          <CheckCircle size={14} className="inline ml-1" />
-                                          تسویه کامل
-                                        </button>
-                                      </div>
-                                    )}
+                                  <div>
+                                    <p className="text-xs text-slate-500">Contact</p>
+                                    <p className="text-sm text-slate-700 font-medium">{order.customerPhone || 'No phone provided'}</p>
                                   </div>
                                 )}
+                                {user?.role === UserRole.ADMIN && (
+                                  <>
+                                    <div>
+                                      <p className="text-xs text-slate-500">پرداخت شده</p>
+                                      <p className="text-sm text-green-600 font-bold">
+                                        {((order.amountPaid || 0) * exchangeRate).toLocaleString('fa-IR')} تومان
+                                      </p>
+                                      <p className="text-xs text-slate-400">
+                                        {(order.amountPaid || 0).toFixed(2)} درهم
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-slate-500">باقی‌مانده</p>
+                                      <p className="text-sm text-red-600 font-bold">
+                                        {((order.balanceDue || 0) * exchangeRate).toLocaleString('fa-IR')} تومان
+                                      </p>
+                                      <p className="text-xs text-slate-400">
+                                        {(order.balanceDue || 0).toFixed(2)} درهم
+                                      </p>
+                                    </div>
+                                  </>
+                                )}
                               </div>
-                            </div>
-                            <div className="flex items-end justify-end">
-                              <div className="text-right">
-                                <p className="text-xs text-slate-500 uppercase">Total Items</p>
-                                <p className="text-xl font-bold text-slate-800">{order.totalItems}</p>
-                              </div>
+                              {user?.role === UserRole.ADMIN && (order.balanceDue || 0) > 0 && (
+                                <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setPaymentOrderId(order.id);
+                                      setPaymentModalOpen(true);
+                                    }}
+                                    className="flex-1 px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                                  >
+                                    <DollarSign size={14} className="inline ml-1" />
+                                    پرداخت بعدی
+                                  </button>
+                                  <button
+                                    onClick={() => handleSettleFull(order.id)}
+                                    className="flex-1 px-3 py-2 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 transition-colors font-medium"
+                                  >
+                                    <CheckCircle size={14} className="inline ml-1" />
+                                    تسویه کامل
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          <div className="space-y-4">
-                            <h4 className="font-bold text-slate-800 text-sm">Packages in this Order</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {order.packages.map(pkg => (
-                                <div key={pkg.id} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex gap-4">
-                                  <div className="bg-white p-2 border border-slate-100 rounded h-min">
-                                    <QRCodeCanvas value={pkg.qrCodeData} size={64} />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="font-bold text-slate-800 text-sm truncate">{pkg.description}</div>
-                                    <div className="text-xs text-slate-500 font-mono mt-1">{pkg.id}</div>
-                                    {pkg.productLink && (
-                                      <a href={pkg.productLink} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 flex items-center gap-1 mt-1 hover:underline">
-                                        <ExternalLink size={10} /> Product Link
-                                      </a>
-                                    )}
-                                    
-                                    {/* Internal Tracking Code - Admin Only */}
-                                    {user?.role === UserRole.ADMIN && (
-                                      <div className="mt-2 mb-2">
-                                        {editingTrackingCode?.packageId === pkg.id ? (
-                                          <div className="flex gap-1">
-                                            <input
-                                              type="text"
-                                              value={editingTrackingCode.code}
-                                              onChange={(e) => setEditingTrackingCode({ packageId: pkg.id, code: e.target.value })}
-                                              placeholder="کد رهگیری داخلی..."
-                                              className="flex-1 px-2 py-1 text-xs border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-right"
-                                              autoFocus
-                                            />
-                                            <button
-                                              onClick={() => handleUpdateInternalTrackingCode(pkg.id, editingTrackingCode.code)}
-                                              className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
-                                            >
-                                              ✓
-                                            </button>
-                                            <button
-                                              onClick={() => setEditingTrackingCode(null)}
-                                              className="px-2 py-1 bg-slate-300 text-slate-700 text-xs rounded hover:bg-slate-400"
-                                            >
-                                              ✕
-                                            </button>
-                                          </div>
-                                        ) : pkg.internalTrackingCode ? (
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-xs text-slate-600 bg-blue-50 px-2 py-1 rounded border border-blue-200 font-mono">
-                                              کد رهگیری: {pkg.internalTrackingCode}
-                                            </span>
-                                            <button
-                                              onClick={() => setEditingTrackingCode({ packageId: pkg.id, code: pkg.internalTrackingCode || '' })}
-                                              className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
-                                            >
-                                              ویرایش
-                                            </button>
-                                          </div>
-                                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {order.packages.map(pkg => (
+                              <div key={pkg.id} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex gap-4">
+                                <div className="bg-white p-2 border border-slate-100 rounded h-min shrink-0">
+                                  <QRCodeCanvas value={pkg.qrCodeData} size={64} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-slate-800 text-sm truncate">{pkg.description}</div>
+                                  <div className="text-xs text-slate-500 font-mono mt-1">{pkg.id}</div>
+                                  {pkg.productLink && (
+                                    <a href={pkg.productLink} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 flex items-center gap-1 mt-1 hover:underline">
+                                      <ExternalLink size={10} /> Product Link
+                                    </a>
+                                  )}
+                                  
+                                  {/* Internal Tracking Code - Admin Only */}
+                                  {user?.role === UserRole.ADMIN && (
+                                    <div className="mt-2 mb-2">
+                                      {editingTrackingCode?.packageId === pkg.id ? (
+                                        <div className="flex gap-1">
+                                          <input
+                                            type="text"
+                                            value={editingTrackingCode.code}
+                                            onChange={(e) => setEditingTrackingCode({ packageId: pkg.id, code: e.target.value })}
+                                            placeholder="کد رهگیری داخلی..."
+                                            className="flex-1 px-2 py-1 text-xs border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-right"
+                                            autoFocus
+                                          />
                                           <button
-                                            onClick={() => setEditingTrackingCode({ packageId: pkg.id, code: '' })}
-                                            className="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-200 hover:bg-blue-100 transition-colors"
+                                            onClick={() => handleUpdateInternalTrackingCode(pkg.id, editingTrackingCode.code)}
+                                            className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
                                           >
-                                            + افزودن کد رهگیری داخلی
+                                            ✓
                                           </button>
-                                        )}
-                                      </div>
-                                    )}
-                                    
-                                    <div className="mt-2 flex justify-between items-end">
-                                      <StatusBadge status={pkg.currentStatus} />
-                                      {pkg.price && user?.role === UserRole.ADMIN && (
-                                        <div className="text-right">
-                                          <div className="text-sm font-bold text-slate-700">
-                                            {(pkg.price * exchangeRate).toLocaleString('fa-IR')} تومان
-                                          </div>
-                                          <div className="text-xs text-slate-400">
-                                            {pkg.price.toFixed(2)} درهم
-                                          </div>
+                                          <button
+                                            onClick={() => setEditingTrackingCode(null)}
+                                            className="px-2 py-1 bg-slate-300 text-slate-700 text-xs rounded hover:bg-slate-400"
+                                          >
+                                            ✕
+                                          </button>
                                         </div>
+                                      ) : pkg.internalTrackingCode ? (
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-slate-600 bg-blue-50 px-2 py-1 rounded border border-blue-200 font-mono">
+                                            کد رهگیری: {pkg.internalTrackingCode}
+                                          </span>
+                                          <button
+                                            onClick={() => setEditingTrackingCode({ packageId: pkg.id, code: pkg.internalTrackingCode || '' })}
+                                            className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                          >
+                                            ویرایش
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() => setEditingTrackingCode({ packageId: pkg.id, code: '' })}
+                                          className="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-200 hover:bg-blue-100 transition-colors"
+                                        >
+                                          + افزودن کد رهگیری داخلی
+                                        </button>
                                       )}
                                     </div>
-                                    
-                                    {/* Package Images - Only for ADMIN */}
-                                    {user?.role === UserRole.ADMIN && (() => {
-                                      // Try to get images from multiple sources
-                                      let images: string[] = [];
-                                      
-                                      // First check photoUrls (standard field)
-                                      if (pkg.photoUrls && pkg.photoUrls.length > 0) {
-                                        images = pkg.photoUrls;
-                                      }
-                                      // Then check images field from n8n (might be string or array)
-                                      else if ((pkg as any).images) {
-                                        try {
-                                          const imgData = (pkg as any).images;
-                                          if (typeof imgData === 'string') {
-                                            // Parse string JSON to array
-                                            images = JSON.parse(imgData);
-                                          } else if (Array.isArray(imgData)) {
-                                            images = imgData;
-                                          }
-                                        } catch (e) {
-                                          console.error('Failed to parse images:', e);
-                                          images = [];
-                                        }
-                                      }
-                                      
-                                      return images.length > 0 && (
-                                        <div className="mt-3 pt-3 border-t border-slate-100">
-                                          <div className="flex items-center gap-2 mb-2">
-                                            <ScanLine size={14} className="text-slate-500" />
-                                            <span className="text-xs font-medium text-slate-600">{images.length} عکس</span>
-                                          </div>
-                                          <div className="flex gap-2 flex-wrap">
-                                            {images.map((imgUrl: string, idx: number) => (
-                                              <a 
-                                                key={idx}
-                                                href={imgUrl} 
-                                                target="_blank" 
-                                                rel="noopener noreferrer"
-                                                className="block w-16 h-16 rounded border border-slate-200 overflow-hidden hover:ring-2 hover:ring-blue-400 transition-all"
-                                              >
-                                                <img 
-                                                  src={imgUrl} 
-                                                  alt={`Package ${idx + 1}`}
-                                                  className="w-full h-full object-cover"
-                                                  onError={(e) => {
-                                                    (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect fill="%23f1f5f9" width="64" height="64"/%3E%3Ctext x="50%25" y="50%25" font-size="24" text-anchor="middle" dy=".3em" fill="%2394a3b8"%3E?%3C/text%3E%3C/svg%3E';
-                                                  }}
-                                                />
-                                              </a>
-                                            ))}
-                                          </div>
+                                  )}
+
+                                  {/* Internal Order ID - For ADMIN and CHINA_AGENT */}
+                                  {(user?.role === UserRole.ADMIN || user?.role === UserRole.CHINA_AGENT) && (
+                                    <div className="mt-2">
+                                      {editingOrderId && editingOrderId.packageId === pkg.id ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            value={editingOrderId.code}
+                                            onChange={(e) => setEditingOrderId({ packageId: pkg.id, code: e.target.value })}
+                                            placeholder="کد سفارش 1688/تائوبائو..."
+                                            className="flex-1 px-2 py-1 text-xs border border-green-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500 text-right"
+                                            autoFocus
+                                          />
+                                          <button
+                                            onClick={() => handleUpdateInternalOrderId(pkg.id, editingOrderId.code)}
+                                            className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                                          >
+                                            ✓
+                                          </button>
+                                          <button
+                                            onClick={() => setEditingOrderId(null)}
+                                            className="px-2 py-1 bg-slate-300 text-slate-700 text-xs rounded hover:bg-slate-400"
+                                          >
+                                            ✕
+                                          </button>
                                         </div>
-                                      );
-                                    })()}
+                                      ) : pkg.internalOrderId ? (
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-slate-600 bg-green-50 px-2 py-1 rounded border border-green-200 font-mono">
+                                            کد سفارش: {pkg.internalOrderId}
+                                          </span>
+                                          <button
+                                            onClick={() => setEditingOrderId({ packageId: pkg.id, code: pkg.internalOrderId || '' })}
+                                            className="text-xs text-green-600 hover:text-green-800 hover:underline"
+                                          >
+                                            ویرایش
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() => setEditingOrderId({ packageId: pkg.id, code: '' })}
+                                          className="text-xs text-green-600 hover:text-green-800 bg-green-50 px-2 py-1 rounded border border-green-200 hover:bg-green-100 transition-colors"
+                                        >
+                                          + افزودن کد سفارش داخلی
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                  
+                                  <div className="mt-2 flex justify-between items-end">
+                                    <StatusBadge status={pkg.currentStatus} />
+                                    {pkg.price && user?.role === UserRole.ADMIN && (
+                                      <div className="text-right">
+                                        <div className="text-sm font-bold text-slate-700">
+                                          {(pkg.price * exchangeRate).toLocaleString('fa-IR')} تومان
+                                        </div>
+                                        <div className="text-xs text-slate-400">
+                                          {pkg.price.toFixed(2)} درهم
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
+                                  
+                                  {/* Package Images - Only for ADMIN */}
+                                  {user?.role === UserRole.ADMIN && (() => {
+                                    // Try to get images from multiple sources
+                                    let images: string[] = [];
+                                    
+                                    // First check photoUrls (standard field)
+                                    if (pkg.photoUrls && pkg.photoUrls.length > 0) {
+                                      images = pkg.photoUrls;
+                                    }
+                                    // Then check images field from n8n (might be string or array)
+                                    else if ((pkg as any).images) {
+                                      try {
+                                        const imgData = (pkg as any).images;
+                                        if (typeof imgData === 'string') {
+                                          // Parse string JSON to array
+                                          images = JSON.parse(imgData);
+                                        } else if (Array.isArray(imgData)) {
+                                          images = imgData;
+                                        }
+                                      } catch (e) {
+                                        console.error('Failed to parse images:', e);
+                                        images = [];
+                                      }
+                                    }
+                                    
+                                    return images.length > 0 && (
+                                      <div className="mt-3 pt-3 border-t border-slate-100">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <ScanLine size={14} className="text-slate-500" />
+                                          <span className="text-xs font-medium text-slate-600">{images.length} عکس</span>
+                                        </div>
+                                        <div className="flex gap-2 flex-wrap">
+                                          {images.map((imgUrl: string, idx: number) => (
+                                            <button 
+                                              key={idx}
+                                              onClick={() => setLightboxImage(imgUrl)}
+                                              className="block w-16 h-16 rounded border border-slate-200 overflow-hidden hover:ring-2 hover:ring-blue-400 transition-all cursor-pointer"
+                                            >
+                                              <img 
+                                                src={imgUrl} 
+                                                alt={`Package ${idx + 1}`}
+                                                className="w-full h-full object-cover"
+                                                onError={(e) => {
+                                                  (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect fill="%23f1f5f9" width="64" height="64"/%3E%3Ctext x="50%25" y="50%25" font-size="24" text-anchor="middle" dy=".3em" fill="%2394a3b8"%3E?%3C/text%3E%3C/svg%3E';
+                                                }}
+                                              />
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
-                              ))}
-                            </div>
+                              </div>
+                            ))}
                           </div>
                         </td>
                       </tr>
@@ -1062,14 +1269,20 @@ export const OrderList: React.FC = () => {
 
       {/* CREATE ORDER MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+          onClick={handleCloseCreateModal}
+        >
+          <div 
+            className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-2xl flex-row-reverse">
               <div className="text-right">
                 <h3 className="text-xl font-bold text-slate-800">ایجاد سفارش جدید</h3>
                 <p className="text-sm text-slate-500">افزودن محصولات، انتخاب مشتری و ثبت پرداخت‌ها</p>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">
+              <button onClick={handleCloseCreateModal} className="text-slate-400 hover:text-slate-600 p-2">
                 <X size={24} />
               </button>
             </div>
@@ -1401,14 +1614,20 @@ export const OrderList: React.FC = () => {
 
       {/* EDIT ORDER MODAL */}
       {isEditModalOpen && editingOrder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+          onClick={handleCloseEditModal}
+        >
+          <div 
+            className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50 rounded-t-2xl flex-row-reverse">
               <div className="text-right">
                 <h3 className="text-xl font-bold text-slate-800">ویرایش سفارش {editingOrder.id}</h3>
                 <p className="text-sm text-slate-500">اصلاح اطلاعات مشتری، محصولات و پرداخت‌ها</p>
               </div>
-              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">
+              <button onClick={handleCloseEditModal} className="text-slate-400 hover:text-slate-600 p-2">
                 <X size={24} />
               </button>
             </div>
@@ -1599,6 +1818,30 @@ export const OrderList: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Lightbox Modal */}
+      {lightboxImage && (
+        <div 
+          className="fixed inset-0 z-100 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div className="relative max-w-[90vw] max-h-[90vh]">
+            <button
+              onClick={() => setLightboxImage(null)}
+              className="absolute -top-10 left-1/2 -translate-x-1/2 text-white/80 hover:text-white transition-colors flex items-center gap-2 text-sm"
+            >
+              <X size={20} />
+              برای بستن کلیک کنید
+            </button>
+            <img
+              src={lightboxImage}
+              alt="تصویر پکیج"
+              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { StatusBadge } from '../components/StatusBadge';
 import { PackageStatus, Order } from '../types';
-import { ChevronDown, ChevronUp, Loader, Search, Edit2, Save, X, Phone, MapPin, Send, Receipt, Percent, Users, CheckSquare, Square, MessageCircle, ChevronRight, Info } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader, Search, Edit2, Save, X, Phone, MapPin, Send, Receipt, Percent, Users, CheckSquare, Square, MessageCircle, ChevronRight, Info, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { dataService } from '../services/dataService';
+import { smsService } from '../services/smsService';
 
 // Message Templates
 const MESSAGE_TEMPLATES = {
@@ -96,9 +97,35 @@ export const CustomerManagement: React.FC = () => {
   const [showComingSoon, setShowComingSoon] = useState(false);
   
   // New modal flow states
-  const [modalStep, setModalStep] = useState<'select-customers' | 'select-template' | 'edit-message'>('select-customers');
+  const [modalStep, setModalStep] = useState<'select-customers' | 'select-template' | 'edit-message' | 'sending' | 'result'>('select-customers');
   const [selectedMessageType, setSelectedMessageType] = useState<MessageType | null>(null);
   const [messageText, setMessageText] = useState('');
+  
+  // SMS sending states
+  const [isSending, setIsSending] = useState(false);
+  const [sendProgress, setSendProgress] = useState({ sent: 0, total: 0 });
+  const [sendResult, setSendResult] = useState<{
+    totalSent: number;
+    totalFailed: number;
+    results: Array<{ phone: string; success: boolean; error?: string }>;
+  } | null>(null);
+
+  // Normalize Persian/Arabic characters for better search
+  const normalizeText = (text: string): string => {
+    return text
+      .toLowerCase()
+      // Normalize Arabic/Persian characters
+      .replace(/ي/g, 'ی')
+      .replace(/ك/g, 'ک')
+      .replace(/ؤ/g, 'و')
+      .replace(/أ/g, 'ا')
+      .replace(/إ/g, 'ا')
+      .replace(/آ/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ۀ/g, 'ه')
+      .replace(/\u200C/g, '') // Remove zero-width non-joiner
+      .trim();
+  };
 
   useEffect(() => {
     const fetchCustomers = async () => {
@@ -120,12 +147,14 @@ export const CustomerManagement: React.FC = () => {
     if (searchTerm.trim() === '') {
       setFilteredCustomers(customers);
     } else {
-      const term = searchTerm.toLowerCase();
-      const filtered = customers.filter(customer => 
-        customer.customerName.toLowerCase().includes(term) ||
-        customer.customerPhone?.toLowerCase().includes(term) ||
-        customer.address?.toLowerCase().includes(term)
-      );
+      const term = normalizeText(searchTerm);
+      const filtered = customers.filter(customer => {
+        const name = normalizeText(customer.customerName || '');
+        const phone = normalizeText(customer.customerPhone || '');
+        const address = normalizeText(customer.address || '');
+        
+        return name.includes(term) || phone.includes(term) || address.includes(term);
+      });
       setFilteredCustomers(filtered);
     }
   }, [searchTerm, customers]);
@@ -162,6 +191,9 @@ export const CustomerManagement: React.FC = () => {
     setModalStep('select-customers');
     setSelectedMessageType(null);
     setMessageText('');
+    setIsSending(false);
+    setSendProgress({ sent: 0, total: 0 });
+    setSendResult(null);
   };
 
   const handleNextStep = () => {
@@ -197,17 +229,23 @@ export const CustomerManagement: React.FC = () => {
     setSelectedCustomerIds(newSelected);
   };
 
-  const toggleSelectAll = () => {
-    const modalFilteredCustomers = customers.filter(customer => {
-      if (modalSearchTerm.trim() === '') return true;
-      const term = modalSearchTerm.toLowerCase();
-      return (
-        customer.customerName.toLowerCase().includes(term) ||
-        customer.customerPhone?.toLowerCase().includes(term) ||
-        customer.address?.toLowerCase().includes(term)
+  const modalFilteredCustomers = useMemo(() => {
+    if (modalSearchTerm.trim() === '') return customers;
+    
+    const terms = normalizeText(modalSearchTerm).split(' ').filter(t => t.length > 0);
+    
+    return customers.filter(customer => {
+      const name = normalizeText(customer.customerName || '');
+      const phone = normalizeText(customer.customerPhone || '');
+      
+      // Check if ALL search terms are present in ANY of the fields (Name or Phone only)
+      return terms.every(term => 
+        name.includes(term) || phone.includes(term)
       );
     });
-    
+  }, [modalSearchTerm, customers]);
+
+  const toggleSelectAll = () => {
     if (selectedCustomerIds.size === modalFilteredCustomers.length) {
       setSelectedCustomerIds(new Set());
     } else {
@@ -215,18 +253,48 @@ export const CustomerManagement: React.FC = () => {
     }
   };
 
-  const getModalFilteredCustomers = () => {
-    if (modalSearchTerm.trim() === '') return customers;
-    const term = modalSearchTerm.toLowerCase();
-    return customers.filter(customer => 
-      customer.customerName.toLowerCase().includes(term) ||
-      customer.customerPhone?.toLowerCase().includes(term) ||
-      customer.address?.toLowerCase().includes(term)
-    );
-  };
-
-  const handleSendAction = () => {
-    setShowComingSoon(true);
+  const handleSendAction = async () => {
+    // Get selected customers
+    const selectedCustomers = customers.filter(c => selectedCustomerIds.has(c.customerId));
+    
+    // Filter customers with valid phone numbers
+    const customersWithPhone = selectedCustomers.filter(c => c.customerPhone && smsService.validatePhoneNumber(c.customerPhone));
+    
+    if (customersWithPhone.length === 0) {
+      alert('هیچ مشتری با شماره تلفن معتبر انتخاب نشده است');
+      return;
+    }
+    
+    setIsSending(true);
+    setModalStep('sending');
+    setSendProgress({ sent: 0, total: customersWithPhone.length });
+    
+    try {
+      const result = await smsService.sendBulkSMS(
+        customersWithPhone,
+        messageText,
+        (sent, total) => {
+          setSendProgress({ sent, total });
+        }
+      );
+      
+      setSendResult(result);
+      setModalStep('result');
+    } catch (error) {
+      console.error('Error sending SMS:', error);
+      setSendResult({
+        totalSent: 0,
+        totalFailed: selectedCustomers.length,
+        results: selectedCustomers.map(c => ({
+          phone: c.customerPhone || '',
+          success: false,
+          error: 'خطا در ارسال',
+        })),
+      });
+      setModalStep('result');
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const getModalTitle = () => {
@@ -237,6 +305,10 @@ export const CustomerManagement: React.FC = () => {
         return 'انتخاب نوع پیام';
       case 'edit-message':
         return selectedMessageType ? MESSAGE_TEMPLATES[selectedMessageType].label : 'ویرایش پیام';
+      case 'sending':
+        return 'در حال ارسال...';
+      case 'result':
+        return 'نتیجه ارسال';
       default:
         return '';
     }
@@ -416,14 +488,14 @@ export const CustomerManagement: React.FC = () => {
                       className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm"
                     >
                       <Users size={16} />
-                      {selectedCustomerIds.size === getModalFilteredCustomers().length ? 'لغو انتخاب همه' : 'انتخاب همه'}
+                      {selectedCustomerIds.size === modalFilteredCustomers.length ? 'لغو انتخاب همه' : 'انتخاب همه'}
                     </button>
                   </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4">
                   <div className="space-y-2">
-                    {getModalFilteredCustomers().map((customer) => (
+                    {modalFilteredCustomers.map((customer) => (
                       <div
                         key={customer.customerId}
                         onClick={() => toggleCustomerSelection(customer.customerId)}
@@ -442,17 +514,17 @@ export const CustomerManagement: React.FC = () => {
                         </div>
                         <div className="flex-1 text-right">
                           <p className="font-medium text-slate-800 dark:text-slate-100">{customer.customerName}</p>
-                          <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-400 mt-1 justify-end flex-wrap">
+                          <div className="flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-400 mt-1">
                             {customer.customerPhone && (
-                              <span className="flex items-center gap-1">
+                              <span className="flex items-center gap-1 justify-end">
                                 {customer.customerPhone}
                                 <Phone size={12} />
                               </span>
                             )}
                             {customer.address && (
-                              <span className="flex items-center gap-1 max-w-[200px] truncate">
-                                {customer.address}
-                                <MapPin size={12} className="shrink-0" />
+                              <span className="flex items-start gap-1 justify-end text-right">
+                                <span className="text-right">{customer.address}</span>
+                                <MapPin size={12} className="shrink-0 mt-0.5" />
                               </span>
                             )}
                           </div>
@@ -460,7 +532,7 @@ export const CustomerManagement: React.FC = () => {
                       </div>
                     ))}
                     
-                    {getModalFilteredCustomers().length === 0 && (
+                    {modalFilteredCustomers.length === 0 && (
                       <div className="text-center py-8 text-slate-500 dark:text-slate-400">
                         مشتری‌ای یافت نشد
                       </div>
@@ -538,79 +610,163 @@ export const CustomerManagement: React.FC = () => {
             {modalStep === 'edit-message' && (
               <>
                 <div className="flex-1 overflow-y-auto p-6">
-                  {showComingSoon ? (
-                    <div className="flex flex-col items-center justify-center py-12">
-                      <div className="w-20 h-20 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center mb-4">
-                        <Send size={32} className="text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">به زودی!</h3>
-                      <p className="text-slate-600 dark:text-slate-400 text-center">
-                        این قابلیت در حال توسعه است و به زودی فعال می‌شود.
-                      </p>
-                      <p className="text-sm text-slate-500 dark:text-slate-500 mt-2">
-                        {selectedCustomerIds.size} مشتری انتخاب شده بودند
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Placeholders Help */}
-                      <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-4 mb-4">
-                        <div className="flex items-start gap-2 text-right">
-                          <div className="flex-1">
-                            <p className="font-medium text-blue-800 dark:text-blue-300 mb-2 flex items-center gap-2 justify-end">
-                              متغیرهای قابل استفاده
-                              <Info size={16} />
-                            </p>
-                            <div className="flex flex-wrap gap-2 justify-end">
-                              <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{NAME}}'}</code>
-                              <span className="text-sm text-blue-600 dark:text-blue-400">نام مشتری</span>
-                              <span className="mx-2 text-blue-300">|</span>
-                              <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{PHONE}}'}</code>
-                              <span className="text-sm text-blue-600 dark:text-blue-400">شماره تلفن</span>
-                              <span className="mx-2 text-blue-300">|</span>
-                              <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{ADDRESS}}'}</code>
-                              <span className="text-sm text-blue-600 dark:text-blue-400">آدرس</span>
-                            </div>
-                          </div>
+                  {/* Placeholders Help */}
+                  <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-4 mb-4">
+                    <div className="flex items-start gap-2 text-right">
+                      <div className="flex-1">
+                        <p className="font-medium text-blue-800 dark:text-blue-300 mb-2 flex items-center gap-2 justify-end">
+                          متغیرهای قابل استفاده
+                          <Info size={16} />
+                        </p>
+                        <div className="flex flex-wrap gap-2 justify-end">
+                          <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{NAME}}'}</code>
+                          <span className="text-sm text-blue-600 dark:text-blue-400">نام مشتری</span>
+                          <span className="mx-2 text-blue-300">|</span>
+                          <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{PHONE}}'}</code>
+                          <span className="text-sm text-blue-600 dark:text-blue-400">شماره تلفن</span>
+                          <span className="mx-2 text-blue-300">|</span>
+                          <code className="px-2 py-1 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded text-sm font-mono">{'{{ADDRESS}}'}</code>
+                          <span className="text-sm text-blue-600 dark:text-blue-400">آدرس</span>
                         </div>
                       </div>
+                    </div>
+                  </div>
 
-                      {/* Message Editor */}
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 text-right">
-                        متن پیام
-                      </label>
-                      <textarea
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
-                        className="w-full h-64 px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-right bg-white dark:bg-slate-700 dark:text-slate-100 resize-none font-mono text-sm leading-relaxed"
-                        dir="rtl"
-                      />
+                  {/* Message Editor */}
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 text-right">
+                    متن پیام
+                  </label>
+                  <textarea
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    className="w-full h-64 px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-right bg-white dark:bg-slate-700 dark:text-slate-100 resize-none font-mono text-sm leading-relaxed"
+                    dir="rtl"
+                  />
+                  
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 text-right">
+                    این پیام برای {selectedCustomerIds.size} مشتری ارسال خواهد شد
+                  </p>
+                </div>
+
+                <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                  <button
+                    onClick={handleBackStep}
+                    className="px-4 py-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-medium transition-colors"
+                  >
+                    بازگشت
+                  </button>
+                  <button
+                    onClick={handleSendAction}
+                    disabled={!messageText.trim()}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Send size={18} />
+                    ارسال پیام ({selectedCustomerIds.size})
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 4: Sending Progress */}
+            {modalStep === 'sending' && (
+              <div className="flex-1 flex flex-col items-center justify-center p-8">
+                <div className="relative mb-6">
+                  <div className="w-24 h-24 border-4 border-blue-200 dark:border-blue-900 rounded-full"></div>
+                  <div className="w-24 h-24 border-4 border-blue-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Send size={32} className="text-blue-600" />
+                  </div>
+                </div>
+                
+                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">در حال ارسال پیامک...</h3>
+                <p className="text-slate-600 dark:text-slate-400 mb-4">لطفاً صبر کنید</p>
+                
+                {/* Progress Bar */}
+                <div className="w-full max-w-xs">
+                  <div className="flex justify-between text-sm text-slate-600 dark:text-slate-400 mb-2">
+                    <span>{sendProgress.sent} از {sendProgress.total}</span>
+                    <span>{Math.round((sendProgress.sent / sendProgress.total) * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                    <div 
+                      className="h-full bg-blue-600 transition-all duration-300 ease-out"
+                      style={{ width: `${(sendProgress.sent / sendProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 5: Result */}
+            {modalStep === 'result' && sendResult && (
+              <>
+                <div className="flex-1 overflow-y-auto p-6">
+                  {/* Summary */}
+                  <div className="flex items-center justify-center gap-8 mb-6">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-2">
+                        <CheckCircle size={32} className="text-green-600" />
+                      </div>
+                      <p className="text-2xl font-bold text-green-600">{sendResult.totalSent}</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">موفق</p>
+                    </div>
+                    
+                    {sendResult.totalFailed > 0 && (
+                      <div className="text-center">
+                        <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-2">
+                          <XCircle size={32} className="text-red-600" />
+                        </div>
+                        <p className="text-2xl font-bold text-red-600">{sendResult.totalFailed}</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">ناموفق</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Success Message */}
+                  {sendResult.totalSent > 0 && (
+                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4 mb-4 text-right">
+                      <div className="flex items-center gap-2 justify-end">
+                        <p className="font-medium text-green-800 dark:text-green-300">
+                          پیامک با موفقیت به {sendResult.totalSent} مشتری ارسال شد!
+                        </p>
+                        <CheckCircle size={18} className="text-green-600" />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Failed Details */}
+                  {sendResult.totalFailed > 0 && (
+                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-4 mb-4">
+                      <div className="flex items-center gap-2 justify-end mb-3">
+                        <p className="font-medium text-red-800 dark:text-red-300">
+                          {sendResult.totalFailed} پیامک ارسال نشد
+                        </p>
+                        <AlertCircle size={18} className="text-red-600" />
+                      </div>
                       
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 text-right">
-                        این پیام برای {selectedCustomerIds.size} مشتری ارسال خواهد شد
-                      </p>
-                    </>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {sendResult.results.filter(r => !r.success).map((result, index) => (
+                          <div 
+                            key={index}
+                            className="flex items-center justify-between text-sm bg-white dark:bg-slate-800 p-2 rounded border border-red-100 dark:border-red-800"
+                          >
+                            <span className="text-red-600 dark:text-red-400 text-xs">{result.error}</span>
+                            <span className="text-slate-600 dark:text-slate-400 font-mono">{result.phone || 'بدون شماره'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {!showComingSoon && (
-                  <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                    <button
-                      onClick={handleBackStep}
-                      className="px-4 py-2.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-medium transition-colors"
-                    >
-                      بازگشت
-                    </button>
-                    <button
-                      onClick={handleSendAction}
-                      disabled={!messageText.trim()}
-                      className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Send size={18} />
-                      ارسال پیام ({selectedCustomerIds.size})
-                    </button>
-                  </div>
-                )}
+                <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-center">
+                  <button
+                    onClick={handleCloseModal}
+                    className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    بستن
+                  </button>
+                </div>
               </>
             )}
           </div>

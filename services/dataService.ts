@@ -652,11 +652,32 @@ class DataService {
         customerUserMap.set(user.uid, user);
       });
 
-      // Group orders by customerName (since customerId might be generic like 'undefined')
+      // Group orders by customerId or normalized name/phone
       const customerMap = new Map<string, Order[]>();
       orders.forEach(order => {
-        // Use customerName as the grouping key instead of customerId
-        const key = order.customerName || order.customerId;
+        let key = order.customerId;
+        
+        // Check if this is a "real" customerId (not undefined/null string)
+        // We assume UIDs are longer than 5 chars usually, but let's just check for 'undefined' string which is common in bad data
+        const isValidId = key && key !== 'undefined' && key !== 'null' && key.length > 5;
+        
+        if (!isValidId) {
+            // Fallback to name + phone to group guest orders
+            // Normalize to handle slight variations
+            const name = (order.customerName || '').trim().toLowerCase()
+              .replace(/\s+/g, ' ')
+              .replace(/ي/g, 'ی')
+              .replace(/ك/g, 'ک');
+            const phone = (order.customerPhone || '').trim().replace(/\s/g, '');
+            
+            // If both are empty, dump in "Unknown" bucket
+            if (!name && !phone) {
+              key = 'unknown_guest';
+            } else {
+              key = `guest_${name}_${phone}`;
+            }
+        }
+        
         const existing = customerMap.get(key) || [];
         existing.push(order);
         customerMap.set(key, existing);
@@ -669,10 +690,13 @@ class DataService {
         const lastOrder = sortedOrders[0];
 
         // Get customer info from users collection if available, otherwise use order data
-        const customerUser = customerUserMap.get(lastOrder.customerId);
-        const customerName = lastOrder.customerName || customerUser?.displayName || customerKey;
-        const customerPhone = lastOrder.customerPhone || customerUser?.phoneNumber;
-        const address = lastOrder.address || customerUser?.address;
+        // If grouped by ID, use that ID to lookup. If grouped by guest key, lookup might fail which is expected.
+        const lookupId = (customerKey.startsWith('guest_') || customerKey === 'unknown_guest') ? lastOrder.customerId : customerKey;
+        const customerUser = customerUserMap.get(lookupId);
+        
+        const customerName = customerUser?.displayName || lastOrder.customerName || 'مشتری ناشناس';
+        const customerPhone = customerUser?.phoneNumber || lastOrder.customerPhone;
+        const address = customerUser?.address || lastOrder.address;
 
         // Count delivered vs pending orders
         // An order is considered delivered if all packages are DELIVERED
@@ -683,8 +707,11 @@ class DataService {
 
         const pendingOrders = customerOrders.length - deliveredOrders;
 
+        // Ensure we have a stable unique ID
+        const finalCustomerId = (lookupId && lookupId !== 'undefined' && lookupId !== 'null') ? lookupId : customerKey;
+
         return {
-          customerId: lastOrder.customerId,
+          customerId: finalCustomerId,
           customerName,
           customerPhone,
           address,
